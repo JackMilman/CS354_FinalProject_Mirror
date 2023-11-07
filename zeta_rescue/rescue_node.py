@@ -5,20 +5,20 @@ randomly go to a location in space and come back to the original location
 Author: Walker Todd, Jesse Yao, Jack Posada, and Jack Milman
 """
 import random
+import numpy as np
+
+import rclpy
+import rclpy.node
+from rclpy.action.client import ActionClient
+from rclpy.task import Future
 
 class RescueNode:
 
     def __init__(self, w, x):
-        """Particle constructor.
 
-        Args:
-            w (float): weight for this particle
-            x (int): state for this particle
-        """
         self.weight = w
-        self.x = x
-
-    s
+        self.initial_location = 0
+    
     "Move the robot to the next location."
     def move(self, odom1, odom2):
         # Get the current location.
@@ -40,8 +40,18 @@ class RescueNode:
 
 
 def main():
-    print('Hi from zeta_rescue.')
-
+    while (1):
+        x = random.uniform (-2.0, 2.0)
+        y = random.uniform (-2.0, 2.0)
+        theta = random.uniform (-np.pi, np.pi)
+        timeout = float('inf')
+        rclpy.init()
+        node = RandomNavNode(x, y, theta, timeout)
+        future = node.send_goal()
+        rclpy.spin_until_future_complete(node, future)
+        node.get_logger().info("Node's future: " + str(future.result()))
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
