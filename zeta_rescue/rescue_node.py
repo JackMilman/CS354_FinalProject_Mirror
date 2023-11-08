@@ -7,16 +7,44 @@ Author: Walker Todd, Jesse Yao, Jack Posada, and Jack Milman
 import random
 import numpy as np
 
+import time
+import numpy as np
+from jmu_ros2_util import map_utils
+
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from nav_msgs.msg import OccupancyGrid
+
+from nav2_msgs.action import NavigateToPose
+from action_msgs.msg import GoalStatus
+
 import rclpy
 import rclpy.node
 from rclpy.action.client import ActionClient
 from rclpy.task import Future
-import math
 
-class RescueNode:
+from geometry_msgs.msg import PoseWithCovarianceStamped
+
+import tf_transformations
+
+def create_nav_goal(x, y, theta):
+    goal = NavigateToPose.Goal()
+
+    goal.pose.header.frame_id = 'map'
+    goal.pose.pose.position.x = x
+    goal.pose.pose.position.y = y
+
+    # We need to convert theta to a quaternion....
+    quaternion = tf_transformations.quaternion_from_euler(0, 0, theta, 'rxyz')
+    goal.pose.pose.orientation.x = quaternion[0]
+    goal.pose.pose.orientation.y = quaternion[1]
+    goal.pose.pose.orientation.z = quaternion[2]
+    goal.pose.pose.orientation.w = quaternion[3]
+    return goal
+
+class RescueNode(rclpy.node.Node):
 
     def __init__(self, x, y, theta, timeout):
-        super().__init__('random_nav')
+        super().__init__('rescue_node')
 
         # This QOS Setting is used for topics where the messages
         # should continue to be available indefinitely once they are
@@ -28,6 +56,7 @@ class RescueNode:
         self.create_subscription(OccupancyGrid, 'map',
                                  self.map_callback,
                                  qos_profile=latching_qos)
+        self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.test_callback, 10)
         
         self.goal = create_nav_goal(x, y, theta)
 
@@ -115,6 +144,9 @@ class RescueNode:
             elif time.time() - self.start_time > self.timeout:
                 self.get_logger().info("TAKING TOO LONG. CANCELLING GOAL!")
                 self.cancel_future = self.goal_future.result().cancel_goal_async()
+    
+    def test_callback(self):
+        self.get_logger.info("I AM ALIVE")
 
 
 def main():
@@ -124,12 +156,14 @@ def main():
         theta = random.uniform (-np.pi, np.pi)
         timeout = float('inf')
         rclpy.init()
-        node = RandomNavNode(x, y, theta, timeout)
+        node = RescueNode(x, y, theta, timeout)
         future = node.send_goal()
         rclpy.spin_until_future_complete(node, future)
         node.get_logger().info("Node's future: " + str(future.result()))
         node.destroy_node()
         rclpy.shutdown()
+        break
+    
 
 if __name__ == '__main__':
     main()
