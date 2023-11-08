@@ -56,8 +56,8 @@ class RescueNode(rclpy.node.Node):
         self.create_subscription(OccupancyGrid, 'map',
                                  self.map_callback,
                                  qos_profile=latching_qos)
-        self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.test_callback, 10)
-        
+        self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.test_callback, 10)
+        self.initial_pose = None
         self.goal = create_nav_goal(x, y, theta)
 
         # Create the action client.
@@ -145,8 +145,11 @@ class RescueNode(rclpy.node.Node):
                 self.get_logger().info("TAKING TOO LONG. CANCELLING GOAL!")
                 self.cancel_future = self.goal_future.result().cancel_goal_async()
     
-    def test_callback(self):
-        self.get_logger.info("I AM ALIVE")
+    def test_callback(self, amcl_pose):
+        if self.initial_pose is None:
+            self.initial_pose = amcl_pose
+        self.get_logger().info("I AM ALIVE")
+        self.get_logger().info(self.initial_pose)
 
 
 def main():
@@ -161,9 +164,7 @@ def main():
         rclpy.spin_until_future_complete(node, future)
         node.get_logger().info("Node's future: " + str(future.result()))
         node.destroy_node()
-        rclpy.shutdown()
-        break
-    
+        rclpy.shutdown()    
 
 if __name__ == '__main__':
     main()
