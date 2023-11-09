@@ -25,6 +25,8 @@ from rclpy.task import Future
 from geometry_msgs.msg import PoseWithCovarianceStamped
 
 import tf_transformations
+from zeta_competition.zeta_competition_interfaces.msg import Victim
+from ros2_aruco.ros2_aruco_interfaces.msg import ArucoMarkers
 
 def create_nav_goal(x, y, theta):
     goal = NavigateToPose.Goal()
@@ -57,6 +59,8 @@ class RescueNode(rclpy.node.Node):
                                  self.map_callback,
                                  qos_profile=latching_qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.test_callback, 10)
+        self.create_publisher(Victim, 'victim_pose', self.timer_callback, 10)
+        self.create_subscription(ArucoMarkers, 'aruco_markers', self.timer_callback, 10)
         self.initial_pose = None
         self.goal = create_nav_goal(x, y, theta)
 
