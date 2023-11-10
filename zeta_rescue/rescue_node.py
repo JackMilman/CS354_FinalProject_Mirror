@@ -43,6 +43,16 @@ def create_nav_goal(x, y, theta):
     goal.pose.pose.orientation.w = quaternion[3]
     return goal
 
+def create_nav_goal_quat(x, y, quaternion):
+    goal = NavigateToPose.Goal()
+
+    goal.pose.header.frame_id = 'map'
+    goal.pose.pose.position.x = x
+    goal.pose.pose.position.y = y
+
+    goal.pose.pose.orientation = quaternion
+    return goal
+
 class RescueNode(rclpy.node.Node):
 
     def __init__(self, goal, timeout):
@@ -182,8 +192,8 @@ def main():
     # Navigates back to the initial position and then exits cleanly we hope.
     initial_x = node.initial_pose.pose.pose.position.x
     initial_y = node.initial_pose.pose.pose.position.y
-    initial_theta = node.initial_pose.pose.pose.orientation.z
-    go_back = create_nav_goal(initial_x, initial_y, initial_theta)
+    initial_orient = node.initial_pose.pose.pose.orientation
+    go_back = create_nav_goal_quat(initial_x, initial_y, initial_orient)
     node.update_goal(go_back)
     future = node.send_goal()
     rclpy.spin_until_future_complete(node, future)
