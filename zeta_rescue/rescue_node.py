@@ -25,8 +25,8 @@ from rclpy.task import Future
 from geometry_msgs.msg import PoseWithCovarianceStamped
 
 import tf_transformations
-from zeta_competition.zeta_competition_interfaces.msg import Victim
-from ros2_aruco.ros2_aruco_interfaces.msg import ArucoMarkers
+# from zeta_competition.zeta_competition_interfaces.msg import Victim
+# from ros2_aruco.ros2_aruco_interfaces.msg import ArucoMarkers
 
 def create_nav_goal(x, y, theta):
     goal = NavigateToPose.Goal()
@@ -45,7 +45,7 @@ def create_nav_goal(x, y, theta):
 
 class RescueNode(rclpy.node.Node):
 
-    def __init__(self, x, y, theta, timeout):
+    def __init__(self, goal, timeout):
         super().__init__('rescue_node')
 
         # This QOS Setting is used for topics where the messages
@@ -59,10 +59,10 @@ class RescueNode(rclpy.node.Node):
                                  self.map_callback,
                                  qos_profile=latching_qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.test_callback, 10)
-        self.create_publisher(Victim, 'victim_pose', self.timer_callback, 10)
-        self.create_subscription(ArucoMarkers, 'aruco_markers', self.timer_callback, 10)
+        # self.create_publisher(Victim, 'victim_pose', self.timer_callback, 10)
+        # self.create_subscription(ArucoMarkers, 'aruco_markers', self.timer_callback, 10)
+        self.goal = goal
         self.initial_pose = None
-        self.goal = create_nav_goal(x, y, theta)
 
         # Create the action client.
         self.ac = ActionClient(self, NavigateToPose, '/navigate_to_pose')
@@ -73,6 +73,10 @@ class RescueNode(rclpy.node.Node):
         
         self.map = None
         self.timeout = timeout
+    
+    def update_goal(self, new_goal):
+        self.goal = new_goal
+        self.ac = ActionClient(self, NavigateToPose, '/navigate_to_pose')
     
     def send_goal(self):
         self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
@@ -153,22 +157,42 @@ class RescueNode(rclpy.node.Node):
         if self.initial_pose is None:
             self.initial_pose = amcl_pose
         self.get_logger().info("I AM ALIVE")
-        self.get_logger().info(self.initial_pose)
 
 
 def main():
-    while (1):
+    rclpy.init()
+    x = random.uniform (-2.0, 2.0)
+    y = random.uniform (-2.0, 2.0)
+    theta = random.uniform (-np.pi, np.pi)
+    timeout = float('inf')
+    first_goal = create_nav_goal(x, y, theta)
+    node = RescueNode(first_goal, timeout)
+    # Arbitrary wandering number for testing purposes, can change later.
+    i = 0
+    while i < 2:
         x = random.uniform (-2.0, 2.0)
         y = random.uniform (-2.0, 2.0)
         theta = random.uniform (-np.pi, np.pi)
-        timeout = float('inf')
-        rclpy.init()
-        node = RescueNode(x, y, theta, timeout)
+        new_goal = create_nav_goal(x, y, theta)
+        node.update_goal(new_goal)
         future = node.send_goal()
         rclpy.spin_until_future_complete(node, future)
         node.get_logger().info("Node's future: " + str(future.result()))
-        node.destroy_node()
-        rclpy.shutdown()    
+        i += 1
+    # Navigates back to the initial position and then exits cleanly we hope.
+    initial_x = node.initial_pose.pose.pose.position.x
+    initial_y = node.initial_pose.pose.pose.position.y
+    initial_theta = node.initial_pose.pose.pose.orientation.z
+    go_back = create_nav_goal(initial_x, initial_y, initial_theta)
+    node.update_goal(go_back)
+    future = node.send_goal()
+    rclpy.spin_until_future_complete(node, future)
+    node.get_logger().info("Node's future: " + str(future.result()))
+
+
+
+    node.destroy_node()
+    rclpy.shutdown()    
 
 if __name__ == '__main__':
     main()
