@@ -25,8 +25,9 @@ from rclpy.task import Future
 from geometry_msgs.msg import PoseWithCovarianceStamped
 
 import tf_transformations
-# from zeta_competition.zeta_competition_interfaces.msg import Victim
-# from ros2_aruco.ros2_aruco_interfaces.msg import ArucoMarkers
+from zeta_competition_interfaces.msg import Victim
+
+from ros2_aruco_interfaces.msg import ArucoMarkers
 
 def create_nav_goal(x, y, theta):
     goal = NavigateToPose.Goal()
@@ -70,7 +71,7 @@ class RescueNode(rclpy.node.Node):
                                  qos_profile=latching_qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.test_callback, 10)
         # self.create_publisher(Victim, 'victim_pose', self.timer_callback, 10)
-        # self.create_subscription(ArucoMarkers, 'aruco_markers', self.timer_callback, 10)
+        self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
         self.goal = goal
         self.initial_pose = None
 
@@ -104,6 +105,31 @@ class RescueNode(rclpy.node.Node):
         self.future_event = Future()
 
         return self.future_event
+    
+    def scanner_callback(self, aruco_msg):
+        self.get_logger().info("Did you find something?")
+        for marker in aruco_msg.markers:
+            if marker.id == 0:
+                self.get_logger().info("Found a victim!")
+                victim = Victim()
+                victim.header.frame_id = "map"
+                victim.pose.pose.position.x = marker.pose.position.x
+                victim.pose.pose.position.y = marker.pose.position.y
+                victim.pose.pose.position.z = marker.pose.position.z
+                victim.pose.pose.orientation.x = marker.pose.orientation.x
+                victim.pose.pose.orientation.y = marker.pose.orientation.y
+                victim.pose.pose.orientation.z = marker.pose.orientation.z
+                victim.pose.pose.orientation.w = marker.pose.orientation.w
+                victim.pose.covariance = marker.pose.covariance
+                victim.id = marker.id
+                victim.distance = marker.distance
+                victim.confidence = marker.confidence
+                self.victim_pub.publish(victim)
+                self.get_logger().info("Published victim!")
+            else:
+                self.get_logger().info("Found a marker, but not a victim.")
+
+                
         
     def map_callback(self, map_msg):
         """Process the map message.
