@@ -116,6 +116,8 @@ class RescueNode(rclpy.node.Node):
         
         # self.map = None
         self.timeout = timeout
+
+
     def image_callback(self, msg):
         pass
 
@@ -129,15 +131,18 @@ class RescueNode(rclpy.node.Node):
     def get_future(self):
         return self.node_future
     
+    # Starts the wandering process. Should only be used if the robot has not already started wandering.
     def start_wandering(self):
         if not self.wandering:
             first_goal = make_random_goal()
             self.update_goal(first_goal)
     
+    # Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
     def update_goal(self, new_goal):
         self.goal = new_goal
         self.send_goal()
     
+    # Tells the robot to navigate toward the goal using an action client
     def send_goal(self):
         self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
         self.ac.wait_for_server()
