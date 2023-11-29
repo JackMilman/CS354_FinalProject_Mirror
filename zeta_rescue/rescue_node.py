@@ -185,7 +185,7 @@ class RescueNode(rclpy.node.Node):
         #  Create a point one meter ahead of the victim, in the robot's
         #  coordinate frame:
         p1 = self.victim_locations.pop()
-
+        p1.point.x = 1.0
         try:
             #  Transform the point into the odom coordinate frame
             p2 = self.buffer.transform(p1, "odom")
