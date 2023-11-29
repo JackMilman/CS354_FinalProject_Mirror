@@ -10,6 +10,7 @@ import numpy as np
 import time
 import numpy as np
 from jmu_ros2_util import map_utils
+from std_msgs.msg import Empty
 
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
@@ -80,7 +81,10 @@ class RescueNode(rclpy.node.Node):
         # self.create_publisher(Victim, 'victim_pose', self.timer_callback, 10)
         # self.create_subscription(PoseArray, 'aruco_poses', self.scanner_callback, 10)
 
+        self.create_subscription(Empty, '/report_requested', self.report_requested_callback,10)
+
         self.wandering = False
+        self.victim_locations = [] 
 
         # self.goal = goal
         self.goal = None
@@ -104,6 +108,13 @@ class RescueNode(rclpy.node.Node):
         # self.map = None
         self.timeout = timeout
 
+    def report_requested_callback(self, msg):
+        self.get_logger().info("REPORT REQUESTED")
+        self.get_logger().info(f"Number of victims found: {len(self.victim_locations)}")
+        # for pose in self.victim_locations:
+            
+        self.get_logger().info("REPORT COMPLETE")
+    
     def get_future(self):
         return self.node_future
     
@@ -131,6 +142,21 @@ class RescueNode(rclpy.node.Node):
         for pose in aruco_msg.poses:
             self.get_logger().info(f"X = {pose.position.x:.2f}")
             self.get_logger().info(f"Y = {pose.position.y:.2f}")
+
+            if not self.victim_check(pose):
+                self.victim_locations.append(pose)
+                self.get_logger().info(f"New Victim Found! X = {pose.postion.x:.2f}, Y = {pose.postion.y:.2f}")
+
+    """
+    This method is checking to see if the pose is already in the list of victim locations
+    Sometimes the aruco scans victims that have already been scanned but the pose is slightly different
+    """
+    def victim_check(self, new_pose):
+        threshold = 0.2
+        for pose in self.victim_locations:
+            if (abs(pose.position.x - new_pose.position.x) < threshold) and (abs(pose.position.y - new_pose.position.y) < threshold):
+                return True
+        return False
 
     """
     This method is keeping track of the overall status of the node's search
