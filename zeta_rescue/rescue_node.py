@@ -33,6 +33,10 @@ from ros2_aruco_interfaces.msg import ArucoMarkers
 
 from sensor_msgs.msg import Image
 
+from tf2_ros.buffer import Buffer
+
+from tf2_ros.transform_listener import TransformListener
+import tf2_geometry_msgs #  Import is needed, even though not used explicitly
 
 def make_random_goal():
     x = random.uniform (-2.0, 2.0)
@@ -172,6 +176,17 @@ class RescueNode(rclpy.node.Node):
                 return True
         return False
     
+    def tf_frame(self):
+        #  Create a point one meter ahead of the victim, in the robot's
+        #  coordinate frame:
+        p1 = self.victim_locations.pop()
+
+        try:
+            #  Transform the point into the odom coordinate frame
+            p2 = self.buffer.transform(p1, "odom")
+            return p2
+        except Exception as e:
+            self.get_logger().warn(str(e)) # Idk if this works yet, but its a start
 
     """
     This method is keeping track of the overall status of the node's search
