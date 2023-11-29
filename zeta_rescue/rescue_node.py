@@ -191,7 +191,7 @@ class RescueNode(rclpy.node.Node):
             p2 = self.buffer.transform(p1, "odom")
             return p2
         except Exception as e:
-            self.get_logger().warn(str(e)) # Idk if this works yet, but its a start
+            self.get_logger().warn(str(e)) # Idk if this whole method works yet, but its a start
 
     """
     This method is keeping track of the overall status of the node's search
