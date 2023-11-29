@@ -24,17 +24,18 @@ import rclpy.node
 from rclpy.action.client import ActionClient
 from rclpy.task import Future
 
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, Twist
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped
 import tf_transformations
+
 
 from zeta_competition_interfaces.msg import Victim
 
 from ros2_aruco_interfaces.msg import ArucoMarkers
 
 from sensor_msgs.msg import Image
+import tf2_ros
 
 from tf2_ros.buffer import Buffer
-
 from tf2_ros.transform_listener import TransformListener
 import tf2_geometry_msgs #  Import is needed, even though not used explicitly
 
@@ -86,8 +87,11 @@ class RescueNode(rclpy.node.Node):
         #                          self.map_callback,
         #                          qos_profile=latching_qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.init_pose_callback, 10)
-        # self.create_subscription(PoseArray, 'aruco_poses', self.scanner_callback, 10)
+
+        self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
+        
         self.create_subscription(Empty, '/report_requested', self.report_requested_callback,10)
+
         self.create_subscription(Image,'/camera/image_raw', self.image_callback,10)
 
         self.victim_publisher = self.create_publisher(Victim, '/victim', 10)  
@@ -118,6 +122,11 @@ class RescueNode(rclpy.node.Node):
         
         # self.map = None
         self.timeout = timeout
+
+        self.buffer = Buffer()
+        self.listener = TransformListener(self.buffer, self)
+
+        self.victim_transformed_pose = None
 
 
     def image_callback(self, msg):
@@ -158,57 +167,31 @@ class RescueNode(rclpy.node.Node):
     def scanner_callback(self, aruco_msg):
         self.get_logger().info("Did you find something?")
         self.get_logger().info("Poses:")
+
         for pose in aruco_msg.poses:
             self.get_logger().info(f"X = {pose.position.x:.2f}")
             self.get_logger().info(f"Y = {pose.position.y:.2f}")
+            
+            point_your_mom = PointStamped()
 
-            if not self.victim_check(pose):
-                # We are gonna want to move to the victim location
+            point_your_mom.header.frame_id = "camera_rgb_optical_frame"
+            point_your_mom.point = pose.position
+            
+            try:
+                transformed_point = self.buffer.transform(point_your_mom, "map")
 
-                # Take a picture then appending the victim infromation to the victim locations array
-                self.victim_locations.append(pose)
-                self.get_logger().info(f"New Victim Found! X = {pose.postion.x:.2f}, Y = {pose.postion.y:.2f}")
-    
-    """
-    This method is checking to see if the pose is already in the list of victim locations
-    Sometimes the aruco scans victims that have already been scanned but the pose is slightly different
-    """
-    def victim_check(self, new_pose):
-        threshold = 0.04
-        for pose in self.victim_locations:
-            if (abs(pose.position.x - new_pose.position.x) < threshold) and (abs(pose.position.y - new_pose.position.y) < threshold):
-                return True
-        return False
-    
-    def tf_frame(self):
-        #  Create a point one meter ahead of the victim, in the robot's
-        #  coordinate frame:
-        p1 = self.victim_locations.pop()
-        p1.point.x = 1.0
-        try:
-            #  Transform the point into the odom coordinate frame
-            p2 = self.buffer.transform(p1, "odom")
-            return p2
-        except Exception as e:
-            self.get_logger().warn(str(e)) # Idk if this whole method works yet, but its a start
-    
-    """
-    Transform from (0, 0, 0) in map frame to victim frame then a second transformation
-    from the victim to 1m in front of victim
-    """
-    def victim_trans(theta_v, src, dst, pose):
-        tran = Transformer()
-
-        # map to victim
-        F_m_v = trans(0, 0, 0)
-        tran.add_transform("map", "victim", F_m_v)
-
-        # victim to front of victim
-        F_v_f = trans(v_x, v_y, v_z) @ rot_z(theta_v + 180)
-        tran.add_transform("victim", "front", F_v_f)
-
-        return tran.tranform(src, dst, pose)
-
+                if transformed_point.point not in self.victim_locations:
+                    # Stop movement compeletly when we see a victim
+                    self.get_logger().info(f"YOU FOUND A VICTIM BRO GO TAKE A PICTURE")
+                    self.goal_future.result().cancel_goal_async()
+                    # We are gonna want to move to the victim location
+                    
+                    # Take a picture then appending the victim infromation to the victim locations array
+                    self.victim_locations.append(transformed_point.point)
+        
+            except Exception as e:
+                self.get_logger().warn(str(e)) # Idk if this whole method works yet, but its a start
+     
 
     """
     This method is keeping track of the overall status of the node's search
