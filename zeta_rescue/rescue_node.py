@@ -184,13 +184,13 @@ class RescueNode(rclpy.node.Node):
         #  Create a point one meter ahead of the victim, in the robot's
         #  coordinate frame:
         p1 = self.victim_locations.pop()
-
+        p1.point.x = 1.0
         try:
             #  Transform the point into the odom coordinate frame
             p2 = self.buffer.transform(p1, "odom")
             return p2
         except Exception as e:
-            self.get_logger().warn(str(e)) # Idk if this works yet, but its a start
+            self.get_logger().warn(str(e)) # Idk if this whole method works yet, but its a start
 
     """
     This method is keeping track of the overall status of the node's search
