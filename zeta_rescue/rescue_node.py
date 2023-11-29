@@ -85,16 +85,11 @@ class RescueNode(rclpy.node.Node):
         # self.create_subscription(PoseArray, 'aruco_poses', self.scanner_callback, 10)
 
         self.create_subscription(Empty, '/report_requested', self.report_requested_callback,10)
+
         self.victim_publisher = self.create_publisher(Victim, '/victim', 10)  
 
         self.image_subscription = self.create_subscription(Image,'/camera/image_raw', self.image_callback,10)
 
-
-        p_gain_force = 0.22
-        i_gain_force = 0.05
-        d_gain_force = 0.3
-    
-        self.pid_control_force = pid.PID(p_gain_force, i_gain_force, d_gain_force)
         self.thrust_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.wandering = False
         self.victim_locations = [] 
@@ -161,7 +156,6 @@ class RescueNode(rclpy.node.Node):
 
             if not self.victim_check(pose):
                 # We are gonna want to move to the victim location
-                self.distance_error_helper(pose)
 
                 # Take a picture then appending the victim infromation to the victim locations array
                 self.victim_locations.append(pose)
@@ -178,15 +172,7 @@ class RescueNode(rclpy.node.Node):
                 return True
         return False
     
-    def distance_error_helper(self, victim_location):
-        
 
-        x_victim = victim_location.x  # Assuming victim_location is a geometry_msgs/PointStamped message
-        y_victim = victim_location.y
-
-        distance_error = math.sqrt((self.current_pose.x - x_victim)**2 + (self.current_pose.y - y_victim)**2)
-
-        return distance_error
     """
     This method is keeping track of the overall status of the node's search
     """
