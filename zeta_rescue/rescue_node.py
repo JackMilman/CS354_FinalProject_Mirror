@@ -6,10 +6,11 @@ Author: Walker Todd, Jesse Yao, Jack Posada, and Jack Milman
 """
 import random
 import numpy as np
+import math
 
 import time
 import numpy as np
-from jmu_ros2_util import map_utils
+from jmu_ros2_util import map_utils, pid
 from std_msgs.msg import Empty
 
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
@@ -23,12 +24,15 @@ import rclpy.node
 from rclpy.action.client import ActionClient
 from rclpy.task import Future
 
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray
-
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, Twist
 import tf_transformations
+
 from zeta_competition_interfaces.msg import Victim
 
 from ros2_aruco_interfaces.msg import ArucoMarkers
+
+from sensor_msgs.msg import Image
+
 
 def make_random_goal():
     x = random.uniform (-2.0, 2.0)
@@ -78,11 +82,20 @@ class RescueNode(rclpy.node.Node):
         #                          self.map_callback,
         #                          qos_profile=latching_qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.init_pose_callback, 10)
-        # self.create_publisher(Victim, 'victim_pose', self.timer_callback, 10)
         # self.create_subscription(PoseArray, 'aruco_poses', self.scanner_callback, 10)
 
         self.create_subscription(Empty, '/report_requested', self.report_requested_callback,10)
+        self.victim_publisher = self.create_publisher(Victim, '/victim', 10)  
 
+        self.image_subscription = self.create_subscription(Image,'/camera/image_raw', self.image_callback,10)
+
+
+        p_gain_force = 0.22
+        i_gain_force = 0.05
+        d_gain_force = 0.3
+    
+        self.pid_control_force = pid.PID(p_gain_force, i_gain_force, d_gain_force)
+        self.thrust_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.wandering = False
         self.victim_locations = [] 
 
@@ -90,6 +103,7 @@ class RescueNode(rclpy.node.Node):
         self.goal = None
         self.goal_future = Future()
         self.initial_pose = None
+        self.current_pose = None
 
         # Create the action client.
         self.ac = ActionClient(self, NavigateToPose, '/navigate_to_pose')
@@ -107,12 +121,14 @@ class RescueNode(rclpy.node.Node):
         
         # self.map = None
         self.timeout = timeout
+    def image_callback(self, msg):
+        pass
 
     def report_requested_callback(self, msg):
         self.get_logger().info("REPORT REQUESTED")
         self.get_logger().info(f"Number of victims found: {len(self.victim_locations)}")
-        # for pose in self.victim_locations:
-            
+        for victim in self.victim_locations:
+            self.victim_publisher.publish(victim)
         self.get_logger().info("REPORT COMPLETE")
     
     def get_future(self):
@@ -144,20 +160,33 @@ class RescueNode(rclpy.node.Node):
             self.get_logger().info(f"Y = {pose.position.y:.2f}")
 
             if not self.victim_check(pose):
+                # We are gonna want to move to the victim location
+                self.distance_error_helper(pose)
+
+                # Take a picture then appending the victim infromation to the victim locations array
                 self.victim_locations.append(pose)
                 self.get_logger().info(f"New Victim Found! X = {pose.postion.x:.2f}, Y = {pose.postion.y:.2f}")
-
+    
     """
     This method is checking to see if the pose is already in the list of victim locations
     Sometimes the aruco scans victims that have already been scanned but the pose is slightly different
     """
     def victim_check(self, new_pose):
-        threshold = 0.2
+        threshold = 0.04
         for pose in self.victim_locations:
             if (abs(pose.position.x - new_pose.position.x) < threshold) and (abs(pose.position.y - new_pose.position.y) < threshold):
                 return True
         return False
+    
+    def distance_error_helper(self, victim_location):
+        
 
+        x_victim = victim_location.x  # Assuming victim_location is a geometry_msgs/PointStamped message
+        y_victim = victim_location.y
+
+        distance_error = math.sqrt((self.current_pose.x - x_victim)**2 + (self.current_pose.y - y_victim)**2)
+
+        return distance_error
     """
     This method is keeping track of the overall status of the node's search
     """
@@ -217,6 +246,7 @@ class RescueNode(rclpy.node.Node):
         
     
     def init_pose_callback(self, amcl_pose):
+        self.current_pose = amcl_pose
         if self.initial_pose is None:
             self.initial_pose = amcl_pose
             self.get_logger().info("Initial pose set")
