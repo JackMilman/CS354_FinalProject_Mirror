@@ -35,8 +35,8 @@ from sensor_msgs.msg import Image
 
 
 def make_random_goal():
-    x = random.uniform (-2.0, 2.0)
-    y = random.uniform (-2.0, 2.0)
+    x = random.uniform (-0.50, 0.50)
+    y = random.uniform (-0.50, 0.50)
     theta = random.uniform (-np.pi, np.pi)
     random_goal = create_nav_goal(x, y, theta)
     return random_goal
@@ -83,14 +83,11 @@ class RescueNode(rclpy.node.Node):
         #                          qos_profile=latching_qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.init_pose_callback, 10)
         # self.create_subscription(PoseArray, 'aruco_poses', self.scanner_callback, 10)
-
         self.create_subscription(Empty, '/report_requested', self.report_requested_callback,10)
+        self.create_subscription(Image,'/camera/image_raw', self.image_callback,10)
 
         self.victim_publisher = self.create_publisher(Victim, '/victim', 10)  
 
-        self.image_subscription = self.create_subscription(Image,'/camera/image_raw', self.image_callback,10)
-
-        self.thrust_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.wandering = False
         self.victim_locations = [] 
 
@@ -113,6 +110,7 @@ class RescueNode(rclpy.node.Node):
         self.cancel_future = None
         # Used to keep track of the entire node's progress and to exit when we want to.
         self.node_future = Future()
+        self.going_home = False
         
         # self.map = None
         self.timeout = timeout
@@ -140,6 +138,7 @@ class RescueNode(rclpy.node.Node):
     # Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
     def update_goal(self, new_goal):
         self.goal = new_goal
+        self.get_logger().info(f"Goal is: {self.goal.pose.pose.position.x: 0.2f}, {self.goal.pose.pose.position.y: 0.2f}")
         self.send_goal()
     
     # Tells the robot to navigate toward the goal using an action client
@@ -185,16 +184,23 @@ class RescueNode(rclpy.node.Node):
         if self.node_future.done():
             self.get_logger().info("RESCUEBOT RETURNING HOME!")
         elif self.goal_future.done():
-            if self.completed_navs >= self.max_iterations:
-                self.get_logger().info("MAXIMUM ITERATIONS REACHED, EXITING!")
-                self.node_future.set_result(True)
+            if self.completed_navs >= self.max_iterations and not self.going_home:
+                self.get_logger().info("MAXIMUM ITERATIONS REACHED, GOING HOME!")
+                self.goal_future.result().cancel_goal_async()
+                initial_x = self.initial_pose.pose.pose.position.x
+                initial_y = self.initial_pose.pose.pose.position.y
+                initial_orient = self.initial_pose.pose.pose.orientation
+                home = create_nav_goal_quat(initial_x, initial_y, initial_orient)
+                self.update_goal(home)
+                self.going_home = True
+            # If an individual navigation goal is complete.
             elif self.navigation_complete:
                 self.navigation_complete = False
                 self.completed_navs += 1
                 self.get_logger().info(f"{self.completed_navs}")
                 self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
-                x = random.uniform (-2.0, 2.0)
-                y = random.uniform (-2.0, 2.0)
+                x = random.uniform (-0.50, 0.50)
+                y = random.uniform (-0.50, 0.50)
                 theta = random.uniform (-np.pi, np.pi)
                 new_goal = create_nav_goal(x, y, theta)
                 self.update_goal(new_goal)
@@ -203,10 +209,6 @@ class RescueNode(rclpy.node.Node):
 
     def timer_callback(self):
         """Periodically check in on the progress of navigation."""
-
-        if self.completed_navs >= self.max_iterations:
-            self.get_logger().info("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-            self.cancel_future = self.goal_future.result().cancel_goal_async()
 
         if not self.goal_future.done():
             self.get_logger().info("NAVIGATION GOAL NOT YET ACCEPTED")
@@ -230,6 +232,9 @@ class RescueNode(rclpy.node.Node):
                     self.navigation_complete = True
                     # self.ac.destroy()
                     # self.future_event.set_result(False)
+            elif self.going_home:
+                if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
+                    self.node_future.set_result(True)
 
             # elif time.time() - self.start_time > self.timeout:
             #     self.get_logger().info("TAKING TOO LONG. CANCELLING GOAL!")
@@ -254,15 +259,15 @@ def main():
     rclpy.spin_until_future_complete(node, node_future)
 
     # Navigates back to the initial position and then exits cleanly we hope.
-    initial_x = node.initial_pose.pose.pose.position.x
-    initial_y = node.initial_pose.pose.pose.position.y
-    initial_orient = node.initial_pose.pose.pose.orientation
-    go_back = create_nav_goal_quat(initial_x, initial_y, initial_orient)
-    node.update_goal(go_back)
-    node.node_future = Future()
-    node_future = node.get_future()
-    rclpy.spin_until_future_complete(node, node_future)
-    node.get_logger().info("Node's future: " + str(node_future.result()))
+    # initial_x = node.initial_pose.pose.pose.position.x
+    # initial_y = node.initial_pose.pose.pose.position.y
+    # initial_orient = node.initial_pose.pose.pose.orientation
+    # go_back = create_nav_goal_quat(initial_x, initial_y, initial_orient)
+    # node.update_goal(go_back)
+    # node.node_future = Future()
+    # node_future = node.get_future()
+    # rclpy.spin_until_future_complete(node, node_future)
+    # node.get_logger().info("Node's future: " + str(node_future.result()))
 
 
 
