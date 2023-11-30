@@ -134,7 +134,7 @@ class RescueNode(rclpy.node.Node):
         self.victim_transformed_pose = None
 
         self.vicitim_found = False
-
+        self.victim_count= 0
     def image_callback(self, msg):
         self.taken_picture = msg
 
@@ -195,14 +195,26 @@ class RescueNode(rclpy.node.Node):
                         f"Transformed Y = {transformed_point.point.y:.2f}")
 
                     self.goal_future.result().cancel_goal_async()
+
+                    updated_vicitim_pose.position.x = transformed_point.point.x
+                    updated_vicitim_pose.position.y = transformed_point.point.y
+                    updated_vicitim_pose.position.z = transformed_point.point.z
+                    updated_vicitim_pose.orientation = pose.orientation
+                    new_matrix = self.victim_trans(updated_vicitim_pose)
                     # We are gonna want to move to the victim location
                     # Take a picture then appending the victim infromation to the victim locations array
+                    home = create_nav_goal_quat(new_matrix[0], new_matrix[1], new_matrix[2])
+                    self.update_goal(home)
+
+                    # wait for the goal to be compelete
 
                     victim = VictimMsg()
 
-                    victim.id = 123
+                    victim.id = self.victim_count
+                    self.victim_count += 1
                     victim.point = transformed_point
                     victim.description = "Jerry the Journalist"
+                    victim.image = self.taken_picture
 
                     self.victim_locations.append(victim)
                     self.vicitim_found = len(self.victim_locations) > 0
