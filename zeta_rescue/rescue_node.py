@@ -24,7 +24,7 @@ import rclpy.node
 from rclpy.action.client import ActionClient
 from rclpy.task import Future
 
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped, PoseStamped
 import tf_transformations
 
 
@@ -89,23 +89,19 @@ class RescueNode(rclpy.node.Node):
         # self.create_subscription(OccupancyGrid, 'map',
         #                          self.map_callback)
         self.create_subscription(
-            PoseWithCovarianceStamped, 'amcl_pose', self.init_pose_callback, 10)
-
+            PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, 10)
         self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
-
         self.create_subscription(
             Empty, '/report_requested', self.report_requested_callback, 10)
-
         self.create_subscription(
             Image, '/camera/image_raw', self.image_callback, 10)
-        self.taken_picture = None
-
+        
+        self.taken_picture = False
         self.victim_publisher = self.create_publisher(VictimMsg, '/victim', 10)
-
-        self.test_publisher = self.create_publisher(PoseWithCovarianceStamped, '/goal_pose', 10)
 
         self.wandering = False
         self.victim_locations = []
+        self.victims_shot = [] # with a camera, of course
 
         self.goal = None
         self.goal_future = Future()
@@ -128,15 +124,19 @@ class RescueNode(rclpy.node.Node):
         self.going_home = False
 
         # self.map = None
+        self.time_elapsed = 0
         self.timeout = timeout
 
+        self.transform_to_map = None
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
 
         self.victim_transformed_pose = None
         self.going_to_victim = False
-        self.vicitim_found = False
+        self.victim_search_id = 0
+        self.victim_found = False
         self.victim_count= 0
+
     def image_callback(self, msg):
         self.taken_picture = msg
 
@@ -175,61 +175,74 @@ class RescueNode(rclpy.node.Node):
         self.goal_future = self.ac.send_goal_async(self.goal)
 
     def scanner_callback(self, aruco_msg):
-        self.get_logger().info("Did you find something?")
-        self.get_logger().info("Poses:")
+        # self.get_logger().info("Did you find something?")
+        # self.get_logger().info("Poses:")
 
         for pose in aruco_msg.poses:
 
-            point_your_mom = PointStamped()
-
-            point_your_mom.header.frame_id = "camera_rgb_optical_frame"
-            point_your_mom.point = pose.position
+            victim_pose = PoseStamped()
+            self.get_logger().info(f"X: {victim_pose.pose.position.x}")
+            self.get_logger().info(f"Y: {victim_pose.pose.position.y}")
+            self.get_logger().info(f"Theta: {tf_transformations.euler_from_quaternion(victim_pose.pose.orientation)}")
+            victim_pose.header.frame_id = "camera_rgb_optical_frame"
+            victim_pose.pose = pose
 
             try:
-                transformed_point = self.buffer.transform(point_your_mom, "map")
+                self.get_logger().info(f"Help me")
+                transformed_pose = self.buffer.transform(victim_pose, "map")
 
-                if not self.is_duplicate_victim(transformed_point, self.victim_locations):
+                victim_info = VictimMsg()
+                victim_info.id =  self.victim_count
+                self.victim_count += 1
+                victim_info.point = transformed_pose.pose.position
+                victim_info.description = "Ronald the Journalist"
+
+                if not self.is_duplicate_victim(transformed_pose.pose.position, self.victim_locations):
+                    self.victim_locations.append(victim_info)
                     self.get_logger().info(f"YOU FOUND A VICTIM BRO GO TAKE A PICTURE")
                     self.get_logger().info(
-                        f"Transformed X = {transformed_point.point.x:.2f}")
+                        f"Transformed X = {transformed_pose.pose.position.x:.2f}")
                     self.get_logger().info(
-                        f"Transformed Y = {transformed_point.point.y:.2f}")
-                    self.get_logger().info(
-                        f"Transformed Z = {transformed_point.point.z:.2f}")
+                        f"Transformed Y = {transformed_pose.pose.position.y:.2f}")
 
-                    updated_vicitim_pose = pose
-                    updated_vicitim_pose.position.x = transformed_point.point.x
-                    updated_vicitim_pose.position.y = transformed_point.point.y
-                    updated_vicitim_pose.position.z = transformed_point.point.z
-                    
-                    # updated_vicitim_pose.orientation = pose.orientation
-                    new_matrix = self.victim_trans(updated_vicitim_pose)
-                    # We are gonna want to move to the victim location
-                    # Take a picture then appending the victim infromation to the victim locations array
-                    home = create_nav_goal(new_matrix[0], new_matrix[1], new_matrix[2])
-                    self.update_goal(home)
+                    self.goal_future.result().cancel_goal_async()
 
-                    self.going_to_victim = True
+                    # updated_victim_pose = pose
+                    # updated_victim_pose.position.x = transformed_point.point.x
+                    # updated_victim_pose.position.y = transformed_point.point.y
+                    # updated_victim_pose.position.z = transformed_point.point.z
+                    # updated_victim_pose.orientation = pose.orientation
+                    # self.get_logger().info("THIS IS BEFORE THE VICTIM TRANSLATION")
+                    # new_matrix = self.victim_trans(updated_victim_pose)
+                    # # We are gonna want to move to the victim location
+                    # # Take a picture then appending the victim infromation to the victim locations array
+                    # home = create_nav_goal(new_matrix[0], new_matrix[1], new_matrix[2])
+                    victim_goal = create_nav_goal_quat(transformed_pose.pose.position.x, transformed_pose.pose.position.y, transformed_pose.pose.orientation)
+                    if not self.going_to_victim:
+                        self.victim_search_id = victim_info.id
+                        self.update_goal(victim_goal)
+                        self.get_logger().info(f"GOING TO VICTIM")
+                        self.going_to_victim = True
                     # self.get_logger().info(f"HI ARE YOU GETTING HERE SMILE") 
-                    # wait for the goal to be compelete
+                    # # wait for the goal to be compelete
 
-                if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
-                    victim = VictimMsg()
+                # if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
+                #     victim = VictimMsg()
 
-                    victim.id =  self.victim_count 
-                    self.victim_count += 1
-                    victim.point = transformed_point
-                    victim.description = "Jerry the Journalist"
-                    victim.image = self.taken_picture
+                #     victim.id =  self.victim_count 
+                #     self.victim_count += 1
+                #     victim.point = transformed_point
+                #     victim.description = "Jerry the Journalist"
+                #     victim.image = self.taken_picture
 
-                    self.victim_locations.append(victim)
+                #     self.victim_locations.append(victim)
 
             except Exception as e:
                 # Idk if this whole method works yet, but its a start
                 self.get_logger().warn(str(e))
 
     def is_duplicate_victim(self, new_point, existing_victims):
-        threshold = 0.2
+        threshold = 0.3
         for victim in existing_victims:
             distance = np.linalg.norm(
                 np.array([victim.point.point.x, victim.point.point.y]) -
@@ -264,10 +277,22 @@ class RescueNode(rclpy.node.Node):
         tran.add_transform("victim", "front", F_v_f)
 
         return tran.transform('victim', 'front', np.array([0, 0, 0]))
+    
+    """
+    Checks if there are more detected victims and, if so, navs toward them to get a picture.
+    """
+    def search_for_victims(self):
+        self.victim_search_id += 1
+        i = self.victim_search_id
+        if i < len(self.victim_locations):
+            next_goal = self.victim_locations[i]
+
+        pass
+
+
     """
     This method is keeping track of the overall status of the node's search
     """
-
     def wander_callback(self):
         if self.goal_future.done():
             if self.completed_navs >= self.max_iterations and not self.going_home:
@@ -283,16 +308,23 @@ class RescueNode(rclpy.node.Node):
             # If an individual navigation goal is complete.
             elif self.navigation_complete:
                 self.navigation_complete = False
-                self.completed_navs += 1
-                self.get_logger().info(
-                    f"Completed Navigation requests: {self.completed_navs}")
-                if self.completed_navs < self.max_iterations:
+                if self.going_to_victim:
+                    self.going_to_victim = False
+                    # THEN WE TAKE A PICTURE
+                    # [INSERT CODE HERE]
+                    # 
+                    victim = self.victim_locations[self.victim_search_id]
+                    victim.image = self.taken_picture
+                    self.victims_shot.append(victim)
+                    self.search_for_victims()
+                elif self.time_elapsed < self.timeout:
                     self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
                     new_goal = make_random_goal()
                     self.update_goal(new_goal)
         elif not self.wandering:
             self.get_logger().info("RESCUEBOT ROLLING OUT")
             self.start_wandering()
+        self.time_elapsed += 1
 
     def timer_callback(self):
         """Periodically check in on the progress of navigation."""
@@ -306,14 +338,6 @@ class RescueNode(rclpy.node.Node):
                 self.node_future.set_result(False)
 
         else:
-            if self.vicitim_found:
-                # pose = (self.victim_locations[0])
-                # pose_2 = self.victim_trans(pose)
-                # goal = create_nav_goal(pose_2)
-                # self.test_publisher.publish(pose_2)
-                # Pretend that didnt happen
-                self.vicitim_found = len(self.victim_locations) > 0
-
             if not self.navigation_complete:
                 if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
                     self.get_logger().info("NAVIGATION SERVER REPORTS SUCCESS!")
@@ -332,8 +356,11 @@ class RescueNode(rclpy.node.Node):
             #     self.get_logger().info("TAKING TOO LONG. CANCELLING GOAL!")
             #     self.cancel_future = self.goal_future.result().cancel_goal_async()
 
-    def init_pose_callback(self, amcl_pose):
+    def pose_callback(self, amcl_pose):
         self.current_pose = amcl_pose
+        x = amcl_pose.pose.pose.position.x
+        y = amcl_pose.pose.pose.position.y
+        self.get_logger().info(f"Position: {x: .02f}, {y: .02f}")
         if self.initial_pose is None:
             self.initial_pose = amcl_pose
             self.get_logger().info("Initial pose set")
