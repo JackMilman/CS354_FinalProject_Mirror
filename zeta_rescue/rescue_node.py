@@ -192,6 +192,22 @@ class RescueNode(rclpy.node.Node):
             except Exception as e:
                 self.get_logger().warn(str(e)) # Idk if this whole method works yet, but its a start
      
+    """
+    Transform from (0, 0, 0) in map frame to victim frame then a second transformation
+    from the victim to 1m in front of victim
+    """
+    def victim_trans(theta_v, src, dst, pose):
+        tran = Transformer()
+
+        # map to victim
+        F_m_v = trans(0, 0, 0)
+        tran.add_transform("map", "victim", F_m_v)
+
+        # victim to front of victim
+        F_v_f = trans(v_x, v_y, v_z) @ rot_z(theta_v + 180)
+        tran.add_transform("victim", "front", F_v_f)
+
+        return tran.tranform(src, dst, pose)
 
     """
     This method is keeping track of the overall status of the node's search
