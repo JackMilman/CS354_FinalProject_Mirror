@@ -229,13 +229,14 @@ class RescueNode(rclpy.node.Node):
             elif self.navigation_complete:
                 self.navigation_complete = False
                 self.completed_navs += 1
-                self.get_logger().info(f"{self.completed_navs}")
-                self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
-                x = random.uniform (-0.50, 0.50)
-                y = random.uniform (-0.50, 0.50)
-                theta = random.uniform (-np.pi, np.pi)
-                new_goal = create_nav_goal(x, y, theta)
-                self.update_goal(new_goal)
+                if self.completed_navs < self.max_iterations:
+                    self.get_logger().info(f"{self.completed_navs}")
+                    self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
+                    x = random.uniform (-0.50, 0.50)
+                    y = random.uniform (-0.50, 0.50)
+                    theta = random.uniform (-np.pi, np.pi)
+                    new_goal = create_nav_goal(x, y, theta)
+                    self.update_goal(new_goal)
         elif not self.wandering:
             self.start_wandering()
 
@@ -248,22 +249,19 @@ class RescueNode(rclpy.node.Node):
         elif self.cancel_future is not None:  # We've cancelled and are waiting for ack.
             if self.cancel_future.done():
                 self.get_logger().info("SERVER HAS ACKNOWLEDGED CANCELLATION")
-                # self.ac.destroy()
                 self.node_future.set_result(False)
-                # self.future_event.set_result(False)
+
         else:
             if not self.navigation_complete:
                 if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
                     self.get_logger().info("NAVIGATION SERVER REPORTS SUCCESS!")
                     self.navigation_complete = True
-                    # self.ac.destroy()
-                    # self.future_event.set_result(True)
+
                 elif self.goal_future.result().status == GoalStatus.STATUS_ABORTED:
                     self.get_logger().info("NAVIGATION SERVER HAS ABORTED.")
                     self.node_future.set_result(False)
                     self.navigation_complete = True
-                    # self.ac.destroy()
-                    # self.future_event.set_result(False)
+
             elif self.going_home:
                 if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
                     self.node_future.set_result(True)
@@ -289,19 +287,6 @@ def main():
     node = RescueNode(timeout, iterations)
     node_future = node.get_future()
     rclpy.spin_until_future_complete(node, node_future)
-
-    # Navigates back to the initial position and then exits cleanly we hope.
-    # initial_x = node.initial_pose.pose.pose.position.x
-    # initial_y = node.initial_pose.pose.pose.position.y
-    # initial_orient = node.initial_pose.pose.pose.orientation
-    # go_back = create_nav_goal_quat(initial_x, initial_y, initial_orient)
-    # node.update_goal(go_back)
-    # node.node_future = Future()
-    # node_future = node.get_future()
-    # rclpy.spin_until_future_complete(node, node_future)
-    # node.get_logger().info("Node's future: " + str(node_future.result()))
-
-
 
     node.destroy_node()
     rclpy.shutdown()    
