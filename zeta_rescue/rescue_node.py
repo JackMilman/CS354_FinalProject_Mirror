@@ -91,7 +91,7 @@ class RescueNode(rclpy.node.Node):
         self.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self.init_pose_callback, 10)
 
-        # self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
+        self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
 
         self.create_subscription(
             Empty, '/report_requested', self.report_requested_callback, 10)
@@ -101,6 +101,8 @@ class RescueNode(rclpy.node.Node):
         self.taken_picture = None
 
         self.victim_publisher = self.create_publisher(VictimMsg, '/victim', 10)
+
+        self.test_publisher = self.create_publisher(PoseWithCovarianceStamped, '/goal_pose', 10)
 
         self.wandering = False
         self.victim_locations = []
@@ -132,7 +134,7 @@ class RescueNode(rclpy.node.Node):
         self.listener = TransformListener(self.buffer, self)
 
         self.victim_transformed_pose = None
-
+        self.going_to_victim = False
         self.vicitim_found = False
         self.victim_count= 0
     def image_callback(self, msg):
@@ -172,9 +174,9 @@ class RescueNode(rclpy.node.Node):
 
         self.goal_future = self.ac.send_goal_async(self.goal)
 
-    def scanner_callback(self):
-        # self.get_logger().info("Did you find something?")
-        # self.get_logger().info("Poses:")
+    def scanner_callback(self, aruco_msg):
+        self.get_logger().info("Did you find something?")
+        self.get_logger().info("Poses:")
 
         for pose in aruco_msg.poses:
 
@@ -184,8 +186,7 @@ class RescueNode(rclpy.node.Node):
             point_your_mom.point = pose.position
 
             try:
-                transformed_point = self.buffer.transform(
-                    point_your_mom, "map")
+                transformed_point = self.buffer.transform(point_your_mom, "map")
 
                 if not self.is_duplicate_victim(transformed_point, self.victim_locations):
                     self.get_logger().info(f"YOU FOUND A VICTIM BRO GO TAKE A PICTURE")
@@ -193,31 +194,35 @@ class RescueNode(rclpy.node.Node):
                         f"Transformed X = {transformed_point.point.x:.2f}")
                     self.get_logger().info(
                         f"Transformed Y = {transformed_point.point.y:.2f}")
+                    self.get_logger().info(
+                        f"Transformed Z = {transformed_point.point.z:.2f}")
 
-                    self.goal_future.result().cancel_goal_async()
-
+                    updated_vicitim_pose = pose
                     updated_vicitim_pose.position.x = transformed_point.point.x
                     updated_vicitim_pose.position.y = transformed_point.point.y
                     updated_vicitim_pose.position.z = transformed_point.point.z
-                    updated_vicitim_pose.orientation = pose.orientation
+                    
+                    # updated_vicitim_pose.orientation = pose.orientation
                     new_matrix = self.victim_trans(updated_vicitim_pose)
                     # We are gonna want to move to the victim location
                     # Take a picture then appending the victim infromation to the victim locations array
-                    home = create_nav_goal_quat(new_matrix[0], new_matrix[1], new_matrix[2])
+                    home = create_nav_goal(new_matrix[0], new_matrix[1], new_matrix[2])
                     self.update_goal(home)
 
+                    self.going_to_victim = True
+                    # self.get_logger().info(f"HI ARE YOU GETTING HERE SMILE") 
                     # wait for the goal to be compelete
 
+                if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
                     victim = VictimMsg()
 
-                    victim.id = self.victim_count
+                    victim.id =  self.victim_count 
                     self.victim_count += 1
                     victim.point = transformed_point
                     victim.description = "Jerry the Journalist"
                     victim.image = self.taken_picture
 
                     self.victim_locations.append(victim)
-                    self.vicitim_found = len(self.victim_locations) > 0
 
             except Exception as e:
                 # Idk if this whole method works yet, but its a start
@@ -238,7 +243,7 @@ class RescueNode(rclpy.node.Node):
     Transform from (0, 0, 0) in map frame to victim frame then a second transformation
     from the victim to 1m in front of victim
     """
-    def victim_trans(pose):
+    def victim_trans(self, pose):
         tran = transformer.Transformer()
 
         # Create the quaternion then convert it to eulers
@@ -302,7 +307,11 @@ class RescueNode(rclpy.node.Node):
 
         else:
             if self.vicitim_found:
-                goal = (self.victim_locations[0])
+                # pose = (self.victim_locations[0])
+                # pose_2 = self.victim_trans(pose)
+                # goal = create_nav_goal(pose_2)
+                # self.test_publisher.publish(pose_2)
+                # Pretend that didnt happen
                 self.vicitim_found = len(self.victim_locations) > 0
 
             if not self.navigation_complete:
