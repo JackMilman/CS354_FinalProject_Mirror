@@ -90,6 +90,7 @@ class RescueNode(rclpy.node.Node):
         self.create_subscription(Empty, '/report_requested', self.report_requested_callback,10)
 
         self.create_subscription(Image,'/camera/image_raw', self.image_callback,10)
+        self.taken_picture = None
 
         self.victim_publisher = self.create_publisher(VictimMsg, '/victim', 10)  
 
@@ -126,7 +127,7 @@ class RescueNode(rclpy.node.Node):
 
 
     def image_callback(self, msg):
-        pass
+        self.taken_picture = msg
 
     def report_requested_callback(self, msg):
         self.get_logger().info("REPORT REQUESTED")
@@ -188,6 +189,7 @@ class RescueNode(rclpy.node.Node):
 
                     victim.id = 123
                     victim.point = transformed_point
+                    victim.description = "Jerry the Journalist"
 
                     self.victim_locations.append(victim)
         
@@ -205,10 +207,7 @@ class RescueNode(rclpy.node.Node):
         return False
 
 
-    """
-    Transform from (0, 0, 0) in map frame to victim frame then a second transformation
-    from the victim to 1m in front of victim
-    """
+
     """
     Transform from (0, 0, 0) in map frame to victim frame then a second transformation
     from the victim to 1m in front of victim
