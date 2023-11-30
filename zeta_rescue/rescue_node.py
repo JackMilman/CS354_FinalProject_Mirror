@@ -28,7 +28,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped
 import tf_transformations
 
 
-from zeta_competition_interfaces.msg import Victim
+from zeta_competition_interfaces.msg import Victim as VictimMsg
 
 from ros2_aruco_interfaces.msg import ArucoMarkers
 
@@ -91,7 +91,7 @@ class RescueNode(rclpy.node.Node):
 
         self.create_subscription(Image,'/camera/image_raw', self.image_callback,10)
 
-        self.victim_publisher = self.create_publisher(Victim, '/victim', 10)  
+        self.victim_publisher = self.create_publisher(VictimMsg, '/victim', 10)  
 
         self.wandering = False
         self.victim_locations = [] 
@@ -160,14 +160,13 @@ class RescueNode(rclpy.node.Node):
 
         self.goal_future = self.ac.send_goal_async(self.goal)
     
-    def scanner_callback(self, aruco_msg):
-        self.get_logger().info("Did you find something?")
-        self.get_logger().info("Poses:")
+   
+    def scanner_callback(self):
+        # self.get_logger().info("Did you find something?")
+        # self.get_logger().info("Poses:")
 
         for pose in aruco_msg.poses:
-            self.get_logger().info(f"X = {pose.position.x:.2f}")
-            self.get_logger().info(f"Y = {pose.position.y:.2f}")
-            
+         
             point_your_mom = PointStamped()
 
             point_your_mom.header.frame_id = "camera_rgb_optical_frame"
@@ -176,18 +175,40 @@ class RescueNode(rclpy.node.Node):
             try:
                 transformed_point = self.buffer.transform(point_your_mom, "map")
 
-                if transformed_point.point not in self.victim_locations:
-                    # Stop movement compeletly when we see a victim
+                if not self.is_duplicate_victim(transformed_point, self.victim_locations):                    
                     self.get_logger().info(f"YOU FOUND A VICTIM BRO GO TAKE A PICTURE")
+                    self.get_logger().info(f"Transformed X = {transformed_point.point.x:.2f}")
+                    self.get_logger().info(f"Transformed Y = {transformed_point.point.y:.2f}")
+
                     self.goal_future.result().cancel_goal_async()
                     # We are gonna want to move to the victim location
-                    
                     # Take a picture then appending the victim infromation to the victim locations array
-                    self.victim_locations.append(transformed_point.point)
+
+                    victim = VictimMsg()
+
+                    victim.id = 123
+                    victim.point = transformed_point
+
+                    self.victim_locations.append(victim)
         
             except Exception as e:
                 self.get_logger().warn(str(e)) # Idk if this whole method works yet, but its a start
-     
+    
+    def is_duplicate_victim(self, new_point, existing_victims):
+        threshold=0.2
+        for victim in existing_victims:
+            distance = np.linalg.norm(
+                np.array([victim.point.point.x, victim.point.point.y]) - np.array([new_point.point.x, new_point.point.y])
+            )
+            if distance < threshold:
+                return True
+        return False
+
+
+    """
+    Transform from (0, 0, 0) in map frame to victim frame then a second transformation
+    from the victim to 1m in front of victim
+    """
     """
     Transform from (0, 0, 0) in map frame to victim frame then a second transformation
     from the victim to 1m in front of victim
