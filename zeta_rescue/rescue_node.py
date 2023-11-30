@@ -38,6 +38,7 @@ import tf2_ros
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 import tf2_geometry_msgs #  Import is needed, even though not used explicitly
+from zeta_rescue import transformer
 
 def make_random_goal():
     x = random.uniform (-0.50, 0.50)
@@ -76,19 +77,15 @@ class RescueNode(rclpy.node.Node):
     def __init__(self, timeout, iterations):
         super().__init__('rescue_node')
 
-        # This QOS Setting is used for topics where the messages
-        # should continue to be available indefinitely once they are
-        # published. Maps fall into this category.  They typically
-        # don't change, so it makes sense to publish them once.
-        latching_qos = QoSProfile(depth=1,
-                                  durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.declare_parameter('time_limit', 0)
+        timeout = self.get_parameter('time_limit').get_parameter_value().integer_value
+        self.get_logger().info(f"Time limit: {timeout: d}")
 
         # self.create_subscription(OccupancyGrid, 'map',
-        #                          self.map_callback,
-        #                          qos_profile=latching_qos)
+        #                          self.map_callback)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.init_pose_callback, 10)
 
-        self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
+        # self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
         
         self.create_subscription(Empty, '/report_requested', self.report_requested_callback,10)
 
@@ -99,7 +96,6 @@ class RescueNode(rclpy.node.Node):
         self.wandering = False
         self.victim_locations = [] 
 
-        # self.goal = goal
         self.goal = None
         self.goal_future = Future()
         self.initial_pose = None
@@ -197,14 +193,14 @@ class RescueNode(rclpy.node.Node):
     from the victim to 1m in front of victim
     """
     def victim_trans(theta_v, src, dst, pose):
-        tran = Transformer()
+        tran = transformer.Transformer()
 
         # map to victim
-        F_m_v = trans(0, 0, 0)
+        F_m_v = transformer.trans(0, 0, 0)
         tran.add_transform("map", "victim", F_m_v)
 
         # victim to front of victim
-        F_v_f = trans(v_x, v_y, v_z) @ rot_z(theta_v + 180)
+        F_v_f = transformer.trans(v_x, v_y, v_z) @ transformer.rot_z(theta_v + 180)
         tran.add_transform("victim", "front", F_v_f)
 
         return tran.tranform(src, dst, pose)
@@ -213,11 +209,9 @@ class RescueNode(rclpy.node.Node):
     This method is keeping track of the overall status of the node's search
     """
     def wander_callback(self):
-        if self.node_future.done():
-            self.get_logger().info("RESCUEBOT RETURNING HOME!")
-        elif self.goal_future.done():
+        if self.goal_future.done():
             if self.completed_navs >= self.max_iterations and not self.going_home:
-                self.get_logger().info("MAXIMUM ITERATIONS REACHED, GOING HOME!")
+                self.get_logger().info("RESCUEBOT GOING HOME!")
                 self.goal_future.result().cancel_goal_async()
                 initial_x = self.initial_pose.pose.pose.position.x
                 initial_y = self.initial_pose.pose.pose.position.y
@@ -229,15 +223,13 @@ class RescueNode(rclpy.node.Node):
             elif self.navigation_complete:
                 self.navigation_complete = False
                 self.completed_navs += 1
+                self.get_logger().info(f"Completed Navigation requests: {self.completed_navs}")
                 if self.completed_navs < self.max_iterations:
-                    self.get_logger().info(f"{self.completed_navs}")
                     self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
-                    x = random.uniform (-0.50, 0.50)
-                    y = random.uniform (-0.50, 0.50)
-                    theta = random.uniform (-np.pi, np.pi)
-                    new_goal = create_nav_goal(x, y, theta)
+                    new_goal = make_random_goal()
                     self.update_goal(new_goal)
         elif not self.wandering:
+            self.get_logger().info("RESCUEBOT ROLLING OUT")
             self.start_wandering()
 
     def timer_callback(self):
@@ -289,7 +281,7 @@ def main():
     rclpy.spin_until_future_complete(node, node_future)
 
     node.destroy_node()
-    rclpy.shutdown()    
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
