@@ -232,35 +232,38 @@ class RescueNode(rclpy.node.Node):
         i = self.victim_search_id
         if i < len(self.victim_poses):
             vic_pose = self.victim_poses[i]
-            next_goal = create_nav_goal_quat(vic_pose.pose.position.x, vic_pose.pose.position.y, vic_pose.pose.orientation)
+            orient = vic_pose.pose.orientation  
+            orientation_list = np.array([orient.x, orient.y, orient.z, orient.w])
+            vic_orient = tf_transformations.euler_from_quaternion(orientation_list)
+            # here we get (1, 0, 0) in the victim's coordinate frame, facing the victim, in the map's coordinate frame.
+            goal = self.victim_trans(vic_pose, i)
+            next_goal = create_nav_goal(goal[0], goal[1], vic_orient[2] + np.pi / 2) # X, Y, Theta Z
             self.update_goal(next_goal)
             self.victim_search_id += 1
 
     """
-    Transform from (0, 0, 0) in map frame to victim frame then a second transformation
-    from the victim to 1m in front of victim
+    Transform (1, 0, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
     """
-    def victim_trans(self, pose):
-        tran = transformer.Transformer()
+    def victim_trans(self, pose, id):
+        tran = transformer.Transformer("map")
+        posit = pose.pose.position
 
-        # Create the quaternion then convert it to eulers
-        quat = np.array(
-            [pose.orientation.x, pose.orientation.y,
-                pose.orientation.z, pose.orientation.w]
-        )
-        euler = tf_transformations.euler_from_quaternion(quat)
+        # Convert the quaternion to eulers
+        orient = pose.pose.orientation
+        orientation_list = np.array([orient.x, orient.y, orient.z, orient.w])
+        euler = tf_transformations.euler_from_quaternion(orientation_list)
+        self.get_logger().info(f"HERE BE THETA: {euler[2]: .02f}")
+        
+        # victim to map conversion
+        F_map_to_victim = transformer.trans(posit.x, posit.y, 0) @ transformer.rot_z(0) # yaw is euler[2]
+        tran.add_transform("map", f"victim{id: d}", F_map_to_victim)
 
-        # map to victim
-        F_m_v = transformer.trans(
-            pose.position.x, pose.position.y, pose.position.z) @ transformer.rot_z(euler[2]) # yaw is euler[2]
-        tran.add_transform("map", "victim", F_m_v)
-
-        # victim to front of victim
-        F_v_f = transformer.trans(pose.position.x + 1, pose.position.y,
-                                  pose.position.z) @ transformer.rot_z(np.pi)
-        tran.add_transform("victim", "front", F_v_f)
-
-        return tran.transform('victim', 'front', np.array([0, 0, 0]))
+        one_ahead_of_victim = np.array([0.5, 0, 0]) # Negative because we flipped around to face the victim
+        goal = tran.transform(f"victim{id: d}", "map", one_ahead_of_victim)
+        self.get_logger().info(f"ACTUAL X: {goal[0]: .02f}")
+        self.get_logger().info(f"ACTUAL Y: {goal[1]: .02f}")
+        self.get_logger().info(f"ACTUAL THETA: {goal[2]: .02f}")
+        return goal
     
     """
     Shoots a photograph of the victim, sets going_to_victim to false, and adds the victim to the victims_shot list
@@ -295,9 +298,8 @@ class RescueNode(rclpy.node.Node):
                 if not self.going_to_victim:
                     self.goal_future.result().cancel_goal_async()
                     self.going_to_victim = True
-                    self.navigation_complete = True
-                    # self.search_for_victims()
-                    # self.get_logger().info(f"GOING TO NEW VICTIM")
+                    self.search_for_victims()
+                    self.get_logger().info(f"GOING TO NEW VICTIM")
 
     """
     This method is keeping track of the overall status of the node's search
@@ -325,6 +327,7 @@ class RescueNode(rclpy.node.Node):
             self.get_logger().info("RESCUEBOT ROLLING OUT")
             self.start_wandering()
         self.time_elapsed += 1
+        self.get_logger().info(f"TIME ELAPSED: {self.time_elapsed: d}")
 
     def timer_callback(self):
         """Periodically check in on the progress of navigation."""
@@ -360,7 +363,7 @@ class RescueNode(rclpy.node.Node):
         self.current_pose = amcl_pose
         x = amcl_pose.pose.pose.position.x
         y = amcl_pose.pose.pose.position.y
-        self.get_logger().info(f"Position: {x: .02f}, {y: .02f}")
+        self.get_logger().info(f"Robot Position: {x: .02f}, {y: .02f}")
         if self.initial_pose is None:
             self.initial_pose = amcl_pose
             self.get_logger().info("Initial pose set")
