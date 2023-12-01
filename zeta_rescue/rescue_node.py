@@ -152,20 +152,26 @@ class RescueNode(rclpy.node.Node):
     def get_future(self):
         return self.node_future
 
-    # Starts the wandering process. Should only be used if the robot has not already started wandering.
+    """
+    Starts the wandering process. Should only be used if the robot has not already started wandering.
+    """
     def start_wandering(self):
         if not self.wandering:
             first_goal = make_random_goal()
             self.update_goal(first_goal)
 
-    # Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
+    """
+    Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
+    """
     def update_goal(self, new_goal):
         self.goal = new_goal
         self.get_logger().info(
             f"Goal is: {self.goal.pose.pose.position.x: 0.2f}, {self.goal.pose.pose.position.y: 0.2f}")
         self.send_goal()
 
-    # Tells the robot to navigate toward the goal using an action client
+    """
+    Tells the robot to navigate toward the goal using an action client
+    """
     def send_goal(self):
         self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
         self.ac.wait_for_server()
@@ -174,22 +180,6 @@ class RescueNode(rclpy.node.Node):
         self.start_time = time.time()
 
         self.goal_future = self.ac.send_goal_async(self.goal)
-
-    def scanner_callback(self, aruco_msg):
-        # self.get_logger().info("Did you find something?")
-        # self.get_logger().info("Poses:")
-
-        for pose in aruco_msg.poses:
-            if self.make_victim(pose):
-                # We are gonna want to move to the victim location
-                # Take a picture then appending the victim infromation to the victim messages array
-                if not self.going_to_victim:
-                    self.goal_future.result().cancel_goal_async()
-                    self.going_to_victim = True
-                    self.search_for_victims()
-                    self.get_logger().info(f"GOING TO NEW VICTIM")
-            # self.get_logger().info(f"HI ARE YOU GETTING HERE SMILE") 
-            # # wait for the goal to be compelete
         
     """
     This creates a new victim in the robot's world-knowledge and hopefully doesn't create repeats. Returns true if the victim was new.
@@ -197,6 +187,7 @@ class RescueNode(rclpy.node.Node):
     def make_victim(self, pose):
         victim_pose = tf2_geometry_msgs.PoseStamped()
         victim_pose.header.frame_id = "camera_rgb_optical_frame"
+        victim_pose.pose = pose
         try:
             trans_pose = self.buffer.transform(victim_pose, "map")
             victim_pose.pose = trans_pose.pose
@@ -220,6 +211,9 @@ class RescueNode(rclpy.node.Node):
                 self.get_logger().warn(str(e))
         return False
 
+    """
+    Checks if a victim is a duplicate and, if not, returns true.
+    """
     def duplicate_victim(self, new_point, existing_victims):
         threshold = 1.0
         for victim in existing_victims:
@@ -240,7 +234,7 @@ class RescueNode(rclpy.node.Node):
             vic_pose = self.victim_poses[i]
             next_goal = create_nav_goal_quat(vic_pose.pose.position.x, vic_pose.pose.position.y, vic_pose.pose.orientation)
             self.update_goal(next_goal)
-            i += 1
+            self.victim_search_id += 1
 
     """
     Transform from (0, 0, 0) in map frame to victim frame then a second transformation
@@ -267,6 +261,43 @@ class RescueNode(rclpy.node.Node):
         tran.add_transform("victim", "front", F_v_f)
 
         return tran.transform('victim', 'front', np.array([0, 0, 0]))
+    
+    """
+    Shoots a photograph of the victim, sets going_to_victim to false, and adds the victim to the victims_shot list
+    """
+    def shoot_victim(self):
+        self.going_to_victim = False
+        victim = self.victim_messages[self.victim_search_id]
+        victim.image = self.taken_picture
+        self.victims_shot.append(victim)
+    
+    """
+    Logic for determining which goal to go to next.
+    """
+    def do_next_navigation(self):
+        victims_remaining = len(self.victims_shot) < len(self.victim_messages)
+        time_remaining = self.time_elapsed < (self.timeout - 20)
+        if victims_remaining:
+            self.get_logger().info("GOING TO NEXT KNOWN VICTIM")
+            self.search_for_victims()
+        elif time_remaining:
+            self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
+            new_goal = make_random_goal()
+            self.update_goal(new_goal)
+        else:
+            self.completed_navs = 1000000000000000 # hacky way to end the movement, fix later
+
+    def scanner_callback(self, aruco_msg):
+        for pose in aruco_msg.poses:
+            if self.make_victim(pose):
+                # We are gonna want to move to the victim location
+                # Take a picture then appending the victim infromation to the victim messages array
+                if not self.going_to_victim:
+                    self.goal_future.result().cancel_goal_async()
+                    self.going_to_victim = True
+                    self.navigation_complete = True
+                    # self.search_for_victims()
+                    # self.get_logger().info(f"GOING TO NEW VICTIM")
 
     """
     This method is keeping track of the overall status of the node's search
@@ -286,19 +317,10 @@ class RescueNode(rclpy.node.Node):
             # If an individual navigation goal is complete.
             elif self.navigation_complete:
                 self.navigation_complete = False
-                # if self.going_to_victim:
-                #     self.going_to_victim = False
-                #     # THEN WE TAKE A PICTURE
-                #     # [INSERT CODE HERE]
-                #     # 
-                #     victim = self.victim_poses[self.victim_search_id]
-                #     victim.image = self.taken_picture
-                #     self.victims_shot.append(victim)
-                #     self.search_for_victims()
-                if self.time_elapsed < self.timeout:
-                    self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
-                    new_goal = make_random_goal()
-                    self.update_goal(new_goal)
+                if self.going_to_victim:
+                    self.shoot_victim()
+                self.do_next_navigation()
+
         elif not self.wandering:
             self.get_logger().info("RESCUEBOT ROLLING OUT")
             self.start_wandering()
