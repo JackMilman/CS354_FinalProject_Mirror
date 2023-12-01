@@ -90,19 +90,20 @@ class RescueNode(rclpy.node.Node):
         #                          self.map_callback)
         self.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, 10)
-        self.create_subscription(ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
+        self.create_subscription(
+            ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
         self.create_subscription(
             Empty, '/report_requested', self.report_requested_callback, 10)
         self.create_subscription(
             Image, '/camera/image_raw', self.image_callback, 10)
-        
+
         self.taken_picture = False
         self.victim_publisher = self.create_publisher(VictimMsg, '/victim', 10)
 
         self.wandering = False
         self.victim_poses = []
-        self.victim_messages = [] 
-        self.victims_shot = [] # with a camera, of course
+        self.victim_messages = []
+        self.victims_complete = []
 
         self.goal = None
         self.goal_future = Future()
@@ -132,11 +133,11 @@ class RescueNode(rclpy.node.Node):
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
 
-        self.victim_transformed_pose = None
         self.going_to_victim = False
         self.victim_search_id = 0
         self.victim_found = False
-        self.victim_count= 0
+        self.victim_count = 0
+        self.scan_timer = 0
 
     def image_callback(self, msg):
         self.taken_picture = msg
@@ -144,8 +145,8 @@ class RescueNode(rclpy.node.Node):
     def report_requested_callback(self, msg):
         self.get_logger().info("REPORT REQUESTED")
         self.get_logger().info(
-            f"Number of victims found: {len(self.victim_messages)}")
-        for victim in self.victim_messages:
+            f"Number of victims found: {len(self.victims_complete)}")
+        for victim in self.victims_complete:
             self.victim_publisher.publish(victim)
         self.get_logger().info("REPORT COMPLETE")
 
@@ -155,6 +156,7 @@ class RescueNode(rclpy.node.Node):
     """
     Starts the wandering process. Should only be used if the robot has not already started wandering.
     """
+
     def start_wandering(self):
         if not self.wandering:
             first_goal = make_random_goal()
@@ -163,6 +165,7 @@ class RescueNode(rclpy.node.Node):
     """
     Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
     """
+
     def update_goal(self, new_goal):
         self.goal = new_goal
         self.get_logger().info(
@@ -172,6 +175,7 @@ class RescueNode(rclpy.node.Node):
     """
     Tells the robot to navigate toward the goal using an action client
     """
+
     def send_goal(self):
         self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
         self.ac.wait_for_server()
@@ -180,10 +184,11 @@ class RescueNode(rclpy.node.Node):
         self.start_time = time.time()
 
         self.goal_future = self.ac.send_goal_async(self.goal)
-        
+
     """
     This creates a new victim in the robot's world-knowledge and hopefully doesn't create repeats. Returns true if the victim was new.
     """
+
     def make_victim(self, pose):
         victim_pose = tf2_geometry_msgs.PoseStamped()
         victim_pose.header.frame_id = "camera_rgb_optical_frame"
@@ -196,26 +201,31 @@ class RescueNode(rclpy.node.Node):
             trans_point_stamped.header.frame_id = "camera_rgb_optical_frame"
 
             if not self.duplicate_victim(trans_pose.pose.position, self.victim_messages):
-                self.get_logger().info(f"NEW VICTIM FOUND AT: X = {victim_pose.pose.position.x: .02f}, Y = {victim_pose.pose.position.y: .02f}")
+                self.get_logger().info(
+                    f"NEW VICTIM FOUND AT: X = {victim_pose.pose.position.x: .02f}, Y = {victim_pose.pose.position.y: .02f}")
                 victim_info = VictimMsg()
-                victim_info.id =  self.victim_count
+                victim_info.id = self.victim_count
                 self.victim_count += 1
                 victim_info.point = trans_point_stamped
                 victim_info.description = "Ronald the Journalist"
 
                 self.victim_poses.append(victim_pose)
                 self.victim_messages.append(victim_info)
+                self.get_logger().info(
+                    f"Number of victims: {len(self.victim_messages): d}")
                 return True
         except(tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
-                # Idk if this whole method works yet, but its a start
-                self.get_logger().warn(str(e))
+            # # Idk if this whole method works yet, but its a start
+            # self.get_logger().warn(str(e))
+            pass
         return False
 
     """
-    Checks if a victim is a duplicate and, if not, returns true.
+    Checks if a victim is a duplicate, and returns true if it is not a duplicate
     """
+
     def duplicate_victim(self, new_point, existing_victims):
-        threshold = 1.0
+        threshold = 0.3
         for victim in existing_victims:
             distance = np.linalg.norm(
                 np.array([victim.point.point.x, victim.point.point.y]) -
@@ -224,61 +234,67 @@ class RescueNode(rclpy.node.Node):
             if distance < threshold:
                 return True
         return False
-    
+
     """
     Checks if there are more detected victims and, if so, navs toward them to get a picture.
     """
+
     def search_for_victims(self):
         i = self.victim_search_id
         if i < len(self.victim_poses):
+            self.going_to_victim = True
             vic_pose = self.victim_poses[i]
-            orient = vic_pose.pose.orientation  
-            orientation_list = np.array([orient.x, orient.y, orient.z, orient.w])
-            vic_orient = tf_transformations.euler_from_quaternion(orientation_list)
+            orient = vic_pose.pose.orientation
+            orientation_list = np.array(
+                [orient.x, orient.y, orient.z, orient.w])
+            vic_orient = tf_transformations.euler_from_quaternion(
+                orientation_list)
             # here we get (1, 0, 0) in the victim's coordinate frame, facing the victim, in the map's coordinate frame.
-            goal = self.victim_trans(vic_pose, i)
-            next_goal = create_nav_goal(goal[0], goal[1], vic_orient[2] + np.pi / 2) # X, Y, Theta Z
+            goal = self.victim_transform(vic_pose, i)
+            next_goal = create_nav_goal(
+                goal[0], goal[1], vic_orient[2] + np.pi / 2)  # X, Y, Theta Z
             self.update_goal(next_goal)
-            self.victim_search_id += 1
 
     """
     Transform (1, 0, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
     """
-    def victim_trans(self, pose, id):
+
+    def victim_transform(self, pose, id):
         tran = transformer.Transformer("map")
         posit = pose.pose.position
 
-        # Convert the quaternion to eulers
-        orient = pose.pose.orientation
-        orientation_list = np.array([orient.x, orient.y, orient.z, orient.w])
-        euler = tf_transformations.euler_from_quaternion(orientation_list)
-        self.get_logger().info(f"HERE BE THETA: {euler[2]: .02f}")
-        
         # victim to map conversion
-        F_map_to_victim = transformer.trans(posit.x, posit.y, 0) @ transformer.rot_z(0) # yaw is euler[2]
+        F_map_to_victim = transformer.trans(
+            posit.x, posit.y, 0) @ transformer.rot_z(0)  # yaw is euler[2]
         tran.add_transform("map", f"victim{id: d}", F_map_to_victim)
 
-        one_ahead_of_victim = np.array([0.5, 0, 0]) # Negative because we flipped around to face the victim
+        one_ahead_of_victim = np.array([0.75, 0, 0])
         goal = tran.transform(f"victim{id: d}", "map", one_ahead_of_victim)
-        self.get_logger().info(f"ACTUAL X: {goal[0]: .02f}")
-        self.get_logger().info(f"ACTUAL Y: {goal[1]: .02f}")
-        self.get_logger().info(f"ACTUAL THETA: {goal[2]: .02f}")
         return goal
-    
+
     """
-    Shoots a photograph of the victim, sets going_to_victim to false, and adds the victim to the victims_shot list
+    Shoots a photograph of the victim, sets going_to_victim to false, and adds the victim to the victims_complete list
     """
-    def shoot_victim(self):
+
+    def shoot_photo(self):
         self.going_to_victim = False
+        self.get_logger().info(
+            f"Len victim_messages: {len(self.victim_messages): d}")
+        self.get_logger().info(f"Search ID: {self.victim_search_id: d}")
         victim = self.victim_messages[self.victim_search_id]
         victim.image = self.taken_picture
-        self.victims_shot.append(victim)
-    
+        self.victims_complete.append(victim)
+        self.victim_search_id += 1
+        self.get_logger().info("Picture shot")
+
     """
     Logic for determining which goal to go to next.
     """
+
     def do_next_navigation(self):
-        victims_remaining = len(self.victims_shot) < len(self.victim_messages)
+        victims_remaining = len(self.victims_complete) < len(self.victim_messages)
+        self.get_logger().info(
+            f"NUMBER OF VICTIMS LEFT: {len(self.victim_messages) - len(self.victims_complete): d}")
         time_remaining = self.time_elapsed < (self.timeout - 20)
         if victims_remaining:
             self.get_logger().info("GOING TO NEXT KNOWN VICTIM")
@@ -288,22 +304,26 @@ class RescueNode(rclpy.node.Node):
             new_goal = make_random_goal()
             self.update_goal(new_goal)
         else:
-            self.completed_navs = 1000000000000000 # hacky way to end the movement, fix later
+            # hacky way to end the movement, fix later
+            self.completed_navs = 1000000000000000
 
     def scanner_callback(self, aruco_msg):
-        for pose in aruco_msg.poses:
-            if self.make_victim(pose):
-                # We are gonna want to move to the victim location
-                # Take a picture then appending the victim infromation to the victim messages array
-                if not self.going_to_victim:
-                    self.goal_future.result().cancel_goal_async()
-                    self.going_to_victim = True
-                    self.search_for_victims()
-                    self.get_logger().info(f"GOING TO NEW VICTIM")
+        if self.scan_timer >= 7:
+            self.scan_timer = 0
+            for pose in aruco_msg.poses:
+                if self.make_victim(pose):
+                    # We are gonna want to move to the victim location
+                    # Take a picture then appending the victim infromation to the victim messages array
+                    if not self.going_to_victim:
+                        self.goal_future.result().cancel_goal_async()
+                        self.going_to_victim = True
+                        self.search_for_victims()
+                        self.get_logger().info(f"GOING TO NEW VICTIM")
 
     """
     This method is keeping track of the overall status of the node's search
     """
+
     def wander_callback(self):
         if self.goal_future.done():
             if self.completed_navs >= self.max_iterations and not self.going_home:
@@ -320,18 +340,20 @@ class RescueNode(rclpy.node.Node):
             elif self.navigation_complete:
                 self.navigation_complete = False
                 if self.going_to_victim:
-                    self.shoot_victim()
+                    self.shoot_photo()
                 self.do_next_navigation()
 
         elif not self.wandering:
             self.get_logger().info("RESCUEBOT ROLLING OUT")
             self.start_wandering()
         self.time_elapsed += 1
-        self.get_logger().info(f"TIME ELAPSED: {self.time_elapsed: d}")
+        # self.get_logger().info(f"TIME ELAPSED: {self.time_elapsed: d}")
+
+    """
+    Periodically check in on the progress of navigation.
+    """
 
     def timer_callback(self):
-        """Periodically check in on the progress of navigation."""
-
         if not self.goal_future.done():
             self.get_logger().info("NAVIGATION GOAL NOT YET ACCEPTED")
 
@@ -358,12 +380,13 @@ class RescueNode(rclpy.node.Node):
             # elif time.time() - self.start_time > self.timeout:
             #     self.get_logger().info("TAKING TOO LONG. CANCELLING GOAL!")
             #     self.cancel_future = self.goal_future.result().cancel_goal_async()
+        self.scan_timer += 1
 
     def pose_callback(self, amcl_pose):
         self.current_pose = amcl_pose
-        x = amcl_pose.pose.pose.position.x
-        y = amcl_pose.pose.pose.position.y
-        self.get_logger().info(f"Robot Position: {x: .02f}, {y: .02f}")
+        # x = amcl_pose.pose.pose.position.x
+        # y = amcl_pose.pose.pose.position.y
+        # self.get_logger().info(f"Robot Position: {x: .02f}, {y: .02f}")
         if self.initial_pose is None:
             self.initial_pose = amcl_pose
             self.get_logger().info("Initial pose set")
