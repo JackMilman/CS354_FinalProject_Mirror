@@ -183,19 +183,21 @@ class RescueNode(rclpy.node.Node):
             victim_pose = PoseStamped()
             self.get_logger().info(f"X: {victim_pose.pose.position.x}")
             self.get_logger().info(f"Y: {victim_pose.pose.position.y}")
-            self.get_logger().info(f"Theta: {tf_transformations.euler_from_quaternion(victim_pose.pose.orientation)}")
+            # self.get_logger().info(f"Theta: {tf_transformations.euler_from_quaternion(victim_pose.pose.orientation)}")
             victim_pose.header.frame_id = "camera_rgb_optical_frame"
             victim_pose.pose = pose
 
             try:
                 self.get_logger().info(f"Help me")
                 transformed_pose = self.buffer.transform(victim_pose, "map")
+                self.get_logger().info(f"You getting here?")
 
                 victim_info = VictimMsg()
                 victim_info.id =  self.victim_count
                 self.victim_count += 1
                 victim_info.point = transformed_pose.pose.position
                 victim_info.description = "Ronald the Journalist"
+
 
                 if not self.is_duplicate_victim(transformed_pose.pose.position, self.victim_locations):
                     self.victim_locations.append(victim_info)
