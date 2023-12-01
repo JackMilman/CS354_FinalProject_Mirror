@@ -1,4 +1,4 @@
-YouTube Demo:
+YouTube Demo: https://www.youtube.com/watch?v=bvbRoR1NNVs
 Current State of Code:
 Since checkpoint 1, our robot has retained all previous functionality and navigates to randomly generated points, but scans for victims while doing so. Once the robot sees a victim, it calculates and stores the victim's location within the map coordinate frame and the victim is given a victim id, it then navigates to a position in front of that victim, turns to face the victim and takes a close up photo of the victim name tag. Once a victim is located and kept track of, the robot randomly generates a new point to navigate to and this whole process repeats. When the "CLICK FOR REPORT" button is clicked, all victim information is published. Once time is running out, the robot navigates back the starting position. A problem we are having is our robot mistaking far away objects as victims and reporting them.
 Testing Instructions:
