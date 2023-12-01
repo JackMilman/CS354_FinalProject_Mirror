@@ -24,9 +24,9 @@ import rclpy.node
 from rclpy.action.client import ActionClient
 from rclpy.task import Future
 
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped, PoseStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped
 import tf_transformations
-
+from tf2_geometry_msgs import PoseStamped
 
 from zeta_competition_interfaces.msg import Victim as VictimMsg
 
@@ -181,13 +181,14 @@ class RescueNode(rclpy.node.Node):
         for pose in aruco_msg.poses:
 
             victim_pose = PoseStamped()
-            self.get_logger().info(f"X: {victim_pose.pose.position.x}")
-            self.get_logger().info(f"Y: {victim_pose.pose.position.y}")
+            # self.get_logger().info(f"X: {victim_pose.pose.position.x}")
+            # self.get_logger().info(f"Y: {victim_pose.pose.position.y}")
             # self.get_logger().info(f"Theta: {tf_transformations.euler_from_quaternion(victim_pose.pose.orientation)}")
             victim_pose.header.frame_id = "camera_rgb_optical_frame"
             victim_pose.pose = pose
 
             try:
+
                 self.get_logger().info(f"Help me")
                 transformed_pose = self.buffer.transform(victim_pose, "map")
                 self.get_logger().info(f"You getting here?")
@@ -206,7 +207,6 @@ class RescueNode(rclpy.node.Node):
                         f"Transformed X = {transformed_pose.pose.position.x:.2f}")
                     self.get_logger().info(
                         f"Transformed Y = {transformed_pose.pose.position.y:.2f}")
-
                     self.goal_future.result().cancel_goal_async()
 
                     # updated_victim_pose = pose
@@ -239,7 +239,7 @@ class RescueNode(rclpy.node.Node):
 
                 #     self.victim_locations.append(victim)
 
-            except Exception as e:
+            except(tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
                 # Idk if this whole method works yet, but its a start
                 self.get_logger().warn(str(e))
 
@@ -273,7 +273,7 @@ class RescueNode(rclpy.node.Node):
             pose.position.x, pose.position.y, pose.position.z) @ transformer.rot_z(euler[2]) # yaw is euler[2]
         tran.add_transform("map", "victim", F_m_v)
 
-    # victim to front of victim
+        # victim to front of victim
         F_v_f = transformer.trans(pose.position.x + 1, pose.position.y,
                                   pose.position.z) @ transformer.rot_z(np.pi)
         tran.add_transform("victim", "front", F_v_f)
