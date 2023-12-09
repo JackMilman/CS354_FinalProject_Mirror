@@ -24,7 +24,7 @@ import rclpy.node
 from rclpy.action.client import ActionClient
 from rclpy.task import Future
 
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped, Pose
 import tf_transformations
 from tf2_geometry_msgs import PoseStamped
 
@@ -78,7 +78,7 @@ def create_nav_goal_quat(x, y, quaternion):
 
 class RescueNode(rclpy.node.Node):
 
-    def __init__(self, timeout, iterations):
+    def __init__(self, iterations):
         super().__init__('rescue_node')
 
         self.declare_parameter('time_limit', 0)
@@ -115,7 +115,7 @@ class RescueNode(rclpy.node.Node):
         self.completed_navs = 0
         self.navigation_complete = False
         self.max_iterations = iterations
-        self.create_timer(.1, self.timer_callback)
+        self.create_timer(.1, self.navigation_callback)
         self.create_timer(1, self.wander_callback)
 
         # Used if we decide to cancel a goal request. None indicates
@@ -127,7 +127,7 @@ class RescueNode(rclpy.node.Node):
 
         # self.map = None
         self.time_elapsed = 0
-        self.timeout = timeout
+        self.timeout = timeout - 20
 
         self.transform_to_map = None
         self.buffer = Buffer()
@@ -168,8 +168,13 @@ class RescueNode(rclpy.node.Node):
 
     def update_goal(self, new_goal):
         self.goal = new_goal
+
+        orient = self.goal.pose.pose.orientation
+        orientation_list = np.array([orient.x, orient.y, orient.z, orient.w])
+        goal_theta = tf_transformations.euler_from_quaternion(orientation_list)
+
         self.get_logger().info(
-            f"Goal is: {self.goal.pose.pose.position.x: 0.2f}, {self.goal.pose.pose.position.y: 0.2f}")
+            f"Goal is: {self.goal.pose.pose.position.x: 0.2f}, {self.goal.pose.pose.position.y: 0.2f}, Theta = {goal_theta[2]: .02f}")
         self.send_goal()
 
     """
@@ -177,10 +182,10 @@ class RescueNode(rclpy.node.Node):
     """
 
     def send_goal(self):
-        self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
+        # self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
         self.ac.wait_for_server()
-        self.get_logger().info("NAVIGATION SERVER AVAILABLE...")
-        self.get_logger().info("SENDING GOAL TO NAVIGATION SERVER...")
+        # self.get_logger().info("NAVIGATION SERVER AVAILABLE...")
+        # self.get_logger().info("SENDING GOAL TO NAVIGATION SERVER...")
         self.start_time = time.time()
 
         self.goal_future = self.ac.send_goal_async(self.goal)
@@ -195,6 +200,13 @@ class RescueNode(rclpy.node.Node):
         victim_pose.pose = pose
         try:
             trans_pose = self.buffer.transform(victim_pose, "map")
+
+            orient = orient = trans_pose.pose.orientation
+            orientation_list = np.array(
+                [orient.x, orient.y, orient.z, orient.w])
+            vic_orient = tf_transformations.euler_from_quaternion(
+                orientation_list)
+            
             victim_pose.pose = trans_pose.pose
             trans_point_stamped = PointStamped()
             trans_point_stamped.point = trans_pose.pose.position
@@ -202,7 +214,7 @@ class RescueNode(rclpy.node.Node):
 
             if not self.duplicate_victim(trans_pose.pose.position, self.victim_messages):
                 self.get_logger().info(
-                    f"NEW VICTIM FOUND AT: X = {victim_pose.pose.position.x: .02f}, Y = {victim_pose.pose.position.y: .02f}")
+                    f"NEW VICTIM FOUND AT: X = {victim_pose.pose.position.x: .02f}, Y = {victim_pose.pose.position.y: .02f} THETA = {vic_orient[2]: .02f}")
                 victim_info = VictimMsg()
                 victim_info.id = self.victim_count
                 self.victim_count += 1
@@ -219,13 +231,26 @@ class RescueNode(rclpy.node.Node):
             # self.get_logger().warn(str(e))
             pass
         return False
+    """
+    Only accepts victims that are within a certain distance of the robot and also in valid positions.
+    """
+    def valid_victim(self, vic_pose: Pose):
+        if self.current_pose is not None:
+            dist_threshold = 2.5
+            robot_point = self.current_pose.pose.pose.position
+            vic_point = vic_pose.position
+            distance = np.linalg.norm(np.array([0, 0]) - np.array([vic_point.x, vic_point.y]))
+            # self.get_logger().info(f"Distance to possible victim: {distance: .02f}")
+            if distance < dist_threshold:
+                return True
+        return False
 
     """
-    Checks if a victim is a duplicate, and returns true if it is not a duplicate
+    Checks if a victim is a duplicate, and returns true only if it *is* a duplicate
     """
 
     def duplicate_victim(self, new_point, existing_victims):
-        threshold = 0.3
+        threshold = 0.4
         for victim in existing_victims:
             distance = np.linalg.norm(
                 np.array([victim.point.point.x, victim.point.point.y]) -
@@ -249,26 +274,34 @@ class RescueNode(rclpy.node.Node):
                 [orient.x, orient.y, orient.z, orient.w])
             vic_orient = tf_transformations.euler_from_quaternion(
                 orientation_list)
-            # here we get (1, 0, 0) in the victim's coordinate frame, facing the victim, in the map's coordinate frame.
+            yaw = vic_orient[2]
+            if yaw >= 0:
+                yaw -= np.pi
+            else:
+                yaw += np.pi
+            # here we get (0, 1, 0) in the victim's coordinate frame, facing the victim, in the map's coordinate frame.
             goal = self.victim_transform(vic_pose, i)
             next_goal = create_nav_goal(
-                goal[0], goal[1], vic_orient[2] + np.pi / 2)  # X, Y, Theta Z
+                goal[0], goal[1], yaw - (np.pi / 2))  # X, Y, Theta Z
             self.update_goal(next_goal)
 
     """
-    Transform (1, 0, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
+    Transform (0, .75, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
     """
 
     def victim_transform(self, pose, id):
         tran = transformer.Transformer("map")
         posit = pose.pose.position
+        orient = pose.pose.orientation
+        quat = np.array([orient.x, orient.y, orient.z, orient.w])
+        euler = tf_transformations.euler_from_quaternion(quat)
 
         # victim to map conversion
         F_map_to_victim = transformer.trans(
-            posit.x, posit.y, 0) @ transformer.rot_z(0)  # yaw is euler[2]
+            posit.x, posit.y, 0) @ transformer.rot_z(euler[2])  # yaw is euler[2]
         tran.add_transform("map", f"victim{id: d}", F_map_to_victim)
 
-        one_ahead_of_victim = np.array([0.75, 0, 0])
+        one_ahead_of_victim = np.array([0, -0.75, 0]) # negative due to rotation to face the victim
         goal = tran.transform(f"victim{id: d}", "map", one_ahead_of_victim)
         return goal
 
@@ -295,8 +328,8 @@ class RescueNode(rclpy.node.Node):
         victims_remaining = len(self.victims_complete) < len(self.victim_messages)
         self.get_logger().info(
             f"NUMBER OF VICTIMS LEFT: {len(self.victim_messages) - len(self.victims_complete): d}")
-        time_remaining = self.time_elapsed < (self.timeout - 20)
-        if victims_remaining:
+        time_remaining = self.time_elapsed < self.timeout
+        if victims_remaining and time_remaining:
             self.get_logger().info("GOING TO NEXT KNOWN VICTIM")
             self.search_for_victims()
         elif time_remaining:
@@ -307,11 +340,16 @@ class RescueNode(rclpy.node.Node):
             # hacky way to end the movement, fix later
             self.completed_navs = 1000000000000000
 
-    def scanner_callback(self, aruco_msg):
-        if self.scan_timer >= 7:
+    """
+    Scans for victims within visual sight range.
+    """
+    def scanner_callback(self, aruco_msg: ArucoMarkers):
+        if self.scan_timer >= 7: # Hacky way to do it so we only do this scan once every 7th callback
             self.scan_timer = 0
             for pose in aruco_msg.poses:
-                if self.make_victim(pose):
+                if not self.valid_victim(pose):
+                    self.get_logger().info("GHOST VICTIM DETECTED, IGNORING...")
+                elif self.make_victim(pose):
                     # We are gonna want to move to the victim location
                     # Take a picture then appending the victim infromation to the victim messages array
                     if not self.going_to_victim:
@@ -353,7 +391,13 @@ class RescueNode(rclpy.node.Node):
     Periodically check in on the progress of navigation.
     """
 
-    def timer_callback(self):
+    def navigation_callback(self):
+        time_remaining = self.time_elapsed < self.timeout
+        if not self.going_home and not time_remaining:
+            self.goal_future.result().cancel_goal_async()
+            self.get_logger().info("TIME IS UP! GO HOME!")
+            self.completed_navs = 10000000000000
+
         if not self.goal_future.done():
             self.get_logger().info("NAVIGATION GOAL NOT YET ACCEPTED")
 
@@ -382,7 +426,7 @@ class RescueNode(rclpy.node.Node):
             #     self.cancel_future = self.goal_future.result().cancel_goal_async()
         self.scan_timer += 1
 
-    def pose_callback(self, amcl_pose):
+    def pose_callback(self, amcl_pose: PoseWithCovarianceStamped):
         self.current_pose = amcl_pose
         # x = amcl_pose.pose.pose.position.x
         # y = amcl_pose.pose.pose.position.y
@@ -395,10 +439,10 @@ class RescueNode(rclpy.node.Node):
 def main():
     rclpy.init()
 
-    timeout = float('inf')
+    # timeout = float('inf')
     # test parameter for determining how long to randomly wander, change later
     iterations = 2
-    node = RescueNode(timeout, iterations)
+    node = RescueNode(iterations)
     node_future = node.get_future()
     rclpy.spin_until_future_complete(node, node_future)
 
