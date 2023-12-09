@@ -41,42 +41,6 @@ from tf2_ros.transform_listener import TransformListener
 import tf2_geometry_msgs  # Import is needed, even though not used explicitly
 from zeta_rescue import transformer
 
-
-def make_random_goal():
-    x = random.uniform(-0.50, 0.50)
-    y = random.uniform(-0.50, 0.50)
-    theta = random.uniform(-np.pi, np.pi)
-    random_goal = create_nav_goal(x, y, theta)
-    return random_goal
-
-
-def create_nav_goal(x, y, theta):
-    goal = NavigateToPose.Goal()
-
-    goal.pose.header.frame_id = 'map'
-    goal.pose.pose.position.x = x
-    goal.pose.pose.position.y = y
-
-    # We need to convert theta to a quaternion....
-    quaternion = tf_transformations.quaternion_from_euler(0, 0, theta, 'rxyz')
-    goal.pose.pose.orientation.x = quaternion[0]
-    goal.pose.pose.orientation.y = quaternion[1]
-    goal.pose.pose.orientation.z = quaternion[2]
-    goal.pose.pose.orientation.w = quaternion[3]
-    return goal
-
-
-def create_nav_goal_quat(x, y, quaternion):
-    goal = NavigateToPose.Goal()
-
-    goal.pose.header.frame_id = 'map'
-    goal.pose.pose.position.x = x
-    goal.pose.pose.position.y = y
-
-    goal.pose.pose.orientation = quaternion
-    return goal
-
-
 class RescueNode(rclpy.node.Node):
 
     def __init__(self, iterations):
@@ -87,12 +51,12 @@ class RescueNode(rclpy.node.Node):
             'time_limit').get_parameter_value().integer_value
         self.get_logger().info(f"Time limit: {timeout: d}")
 
-        latching_qos = QoSProfile(
-            depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
-        )
+        
+        self.initial_pose = None
+        self.current_pose = None
 
-        self.create_subscription(OccupancyGrid, 'map',
-                                 self.map_callback, latching_qos)
+        # self.create_subscription(OccupancyGrid, 'map',
+        #                          self.map_callback)
         self.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, 10)
         self.create_subscription(
@@ -112,8 +76,6 @@ class RescueNode(rclpy.node.Node):
 
         self.goal = None
         self.goal_future = Future()
-        self.initial_pose = None
-        self.current_pose = None
 
         # Create the action client.
         self.ac = ActionClient(self, NavigateToPose, '/navigate_to_pose')
@@ -260,7 +222,7 @@ class RescueNode(rclpy.node.Node):
     """
 
     def duplicate_victim(self, new_point, existing_victims):
-        threshold = 0.4
+        threshold = 0.3
         for victim in existing_victims:
             distance = np.linalg.norm(
                 np.array([victim.point.point.x, victim.point.point.y]) -
@@ -444,7 +406,62 @@ class RescueNode(rclpy.node.Node):
         if self.initial_pose is None:
             self.initial_pose = amcl_pose
             self.get_logger().info("Initial pose set")
+    
+    """
+    This code taken from the set_initial_pose.py file in zeta_competition. We use it
+    to set our initial pose at the very start of the runtime.
+    """
+    def create_pose_w_covariance_stamped(self, x, y, theta, pos_variance, angle_variance):
+        pose = PoseWithCovarianceStamped()
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.header.frame_id = 'map'
+        pose.pose.pose.position.x = x
+        pose.pose.pose.position.y = y
 
+        quaternion = tf_transformations.quaternion_from_euler(0, 0, theta, 'rxyz')
+        pose.pose.pose.orientation.x = quaternion[0]
+        pose.pose.pose.orientation.y = quaternion[1]
+        pose.pose.pose.orientation.z = quaternion[2]
+        pose.pose.pose.orientation.w = quaternion[3]
+
+        pose.pose.covariance[0] = pos_variance
+        pose.pose.covariance[7] = pos_variance
+        pose.pose.covariance[35] = angle_variance
+        return pose
+
+def make_random_goal():
+    x = random.uniform(-0.50, 0.50)
+    y = random.uniform(-0.50, 0.50)
+    theta = random.uniform(-np.pi, np.pi)
+    random_goal = create_nav_goal(x, y, theta)
+    return random_goal
+
+
+def create_nav_goal(x, y, theta):
+    goal = NavigateToPose.Goal()
+
+    goal.pose.header.frame_id = 'map'
+    goal.pose.pose.position.x = x
+    goal.pose.pose.position.y = y
+
+    # We need to convert theta to a quaternion....
+    quaternion = tf_transformations.quaternion_from_euler(0, 0, theta, 'rxyz')
+    goal.pose.pose.orientation.x = quaternion[0]
+    goal.pose.pose.orientation.y = quaternion[1]
+    goal.pose.pose.orientation.z = quaternion[2]
+    goal.pose.pose.orientation.w = quaternion[3]
+    return goal
+
+
+def create_nav_goal_quat(x, y, quaternion):
+    goal = NavigateToPose.Goal()
+
+    goal.pose.header.frame_id = 'map'
+    goal.pose.pose.position.x = x
+    goal.pose.pose.position.y = y
+
+    goal.pose.pose.orientation = quaternion
+    return goal
 
 def main():
     rclpy.init()
