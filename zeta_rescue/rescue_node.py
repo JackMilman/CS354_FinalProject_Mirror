@@ -14,6 +14,7 @@ from jmu_ros2_util import map_utils, pid
 from std_msgs.msg import Empty
 
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from rclpy.qos import qos_profile_sensor_data
 from nav_msgs.msg import OccupancyGrid
 
 from nav2_msgs.action import NavigateToPose
@@ -86,8 +87,12 @@ class RescueNode(rclpy.node.Node):
             'time_limit').get_parameter_value().integer_value
         self.get_logger().info(f"Time limit: {timeout: d}")
 
-        # self.create_subscription(OccupancyGrid, 'map',
-        #                          self.map_callback)
+        latching_qos = QoSProfile(
+            depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
+        )
+
+        self.create_subscription(OccupancyGrid, 'map',
+                                 self.map_callback, latching_qos)
         self.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, 10)
         self.create_subscription(
@@ -139,6 +144,8 @@ class RescueNode(rclpy.node.Node):
         self.victim_count = 0
         self.scan_timer = 0
 
+        self.map = None
+
     def image_callback(self, msg):
         self.taken_picture = msg
 
@@ -152,6 +159,9 @@ class RescueNode(rclpy.node.Node):
 
     def get_future(self):
         return self.node_future
+    
+    def map_callback (self, map_msg):
+        self.map = map_msg
 
     """
     Starts the wandering process. Should only be used if the robot has not already started wandering.
