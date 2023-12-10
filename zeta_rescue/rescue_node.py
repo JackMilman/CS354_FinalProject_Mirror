@@ -52,15 +52,12 @@ class RescueNode(rclpy.node.Node):
             'time_limit').get_parameter_value().integer_value
         self.get_logger().info(f"Time limit: {timeout: d}")
 
-        # the_map = get ur mom
-        
         self.initial_pose = None
         self.current_pose = None
 
         latching_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
             OccupancyGrid, 'map', self.map_callback, qos_profile=latching_qos)
-
         self.create_subscription(
             PoseWithCovarianceStamped, 'initialpose', self.initial_pose_callback, 10)
         self.create_subscription(
@@ -146,7 +143,7 @@ class RescueNode(rclpy.node.Node):
     Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
     """
 
-    def update_goal(self, new_goal):
+    def update_goal(self, new_goal: NavigateToPose.Goal):
         self.goal = new_goal
 
         orient = self.goal.pose.pose.orientation
@@ -216,7 +213,7 @@ class RescueNode(rclpy.node.Node):
     """
     def valid_victim(self, vic_pose: Pose):
         if self.current_pose is not None:
-            dist_threshold = 2.5
+            dist_threshold = 2.0
             vic_point = vic_pose.position
             # tim_pose = tf2_geometry_msgs.PoseStamped()
             # tim_pose.header.frame_id = "camera_rgb_optical_frame"
@@ -253,7 +250,7 @@ class RescueNode(rclpy.node.Node):
         i = self.victim_search_id
         if i < len(self.victim_poses):
             self.going_to_victim = True
-            vic_pose = self.victim_poses[i]
+            vic_pose : PoseStamped = self.victim_poses[i]
             orient = vic_pose.pose.orientation
             orientation_list = np.array(
                 [orient.x, orient.y, orient.z, orient.w])
@@ -344,7 +341,7 @@ class RescueNode(rclpy.node.Node):
                         self.get_logger().info(f"GOING TO NEW VICTIM")
 
     """
-    This method is keeping track of the overall status of the node's search
+    This timer is keeping track of the overall status of the node's search.
     """
 
     def wander_callback(self):
@@ -377,7 +374,7 @@ class RescueNode(rclpy.node.Node):
         # self.get_logger().info(f"TIME ELAPSED: {self.time_elapsed: d}")
 
     """
-    Periodically check in on the progress of navigation.
+    This timer will periodically check in on the progress of navigation, ten times per second.
     """
 
     def navigation_callback(self):
@@ -388,7 +385,8 @@ class RescueNode(rclpy.node.Node):
             self.completed_navs = 10000000000000
 
         if not self.goal_future.done():
-            self.get_logger().info("NAVIGATION GOAL NOT YET ACCEPTED")
+            i = 0
+            # self.get_logger().info("NAVIGATION GOAL NOT YET ACCEPTED")
 
         elif self.cancel_future is not None:  # We've cancelled and are waiting for ack.
             if self.cancel_future.done():
@@ -426,7 +424,7 @@ class RescueNode(rclpy.node.Node):
     """
     Processes the Map message.
     """
-    def map_callback(self, map_msg):
+    def map_callback(self, map_msg : OccupancyGrid):
             self.get_logger().info("HEY WE GOT A MAP MESSAGE HURRAY")
             if self.map is None:  # No need to do this every time map is published.
 
@@ -439,14 +437,10 @@ class RescueNode(rclpy.node.Node):
                 pct_free = np.count_nonzero(self.map.grid == 0) / total_cells * 100
                 map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
                 self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
-
-    def make_random_goal(self):
-        x = random.uniform(-0.50, 0.50)
-        y = random.uniform(-0.50, 0.50)
-        theta = random.uniform(-np.pi, np.pi)
-        random_goal = create_nav_goal(x, y, theta)
-        return random_goal
     
+    """
+    Generates a new goal within the map by picking a random cell in the map's grid and comparing the X and Y of that position to a list of previously-reached positions
+    """
     def make_new_map_goal(self):
         map = self.map
         while True:
