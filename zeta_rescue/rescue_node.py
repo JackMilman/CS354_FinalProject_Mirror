@@ -51,6 +51,7 @@ class RescueNode(rclpy.node.Node):
             'time_limit').get_parameter_value().integer_value
         self.get_logger().info(f"Time limit: {timeout: d}")
 
+        # the_map = get ur mom
         
         self.initial_pose = None
         self.current_pose = None
@@ -109,6 +110,9 @@ class RescueNode(rclpy.node.Node):
         self.scan_timer = 0
 
         self.map = None
+        self.previous_locations_visited = []
+        self.map_width = 0.5
+        self.map_height = 0.5
 
     def image_callback(self, msg):
         self.taken_picture = msg
@@ -133,7 +137,7 @@ class RescueNode(rclpy.node.Node):
 
     def start_wandering(self):
         if not self.wandering:
-            first_goal = make_random_goal()
+            first_goal = self.make_random_goal()
             self.update_goal(first_goal)
             self.wandering = True
 
@@ -309,7 +313,7 @@ class RescueNode(rclpy.node.Node):
             self.search_for_victims()
         elif time_remaining:
             self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
-            new_goal = make_random_goal()
+            new_goal = self.make_random_goal()
             self.update_goal(new_goal)
         else:
             # hacky way to end the movement, fix later
@@ -355,6 +359,7 @@ class RescueNode(rclpy.node.Node):
                     self.navigation_complete = False
                     if self.going_to_victim:
                         self.shoot_photo()
+                    self.previous_locations_visited.append([self.goal.pose.pose.position.x, self.goal.pose.pose.position.y])
                     self.do_next_navigation()
 
             elif not self.wandering:
@@ -409,12 +414,41 @@ class RescueNode(rclpy.node.Node):
     def initial_pose_callback(self, initial_pose: PoseWithCovarianceStamped):
         self.initial_pose = initial_pose
 
-def make_random_goal():
-    x = random.uniform(-0.50, 0.50)
-    y = random.uniform(-0.50, 0.50)
-    theta = random.uniform(-np.pi, np.pi)
-    random_goal = create_nav_goal(x, y, theta)
-    return random_goal
+    def make_random_goal(self):
+        x = random.uniform(-0.50, 0.50)
+        y = random.uniform(-0.50, 0.50)
+        theta = random.uniform(-np.pi, np.pi)
+        random_goal = create_nav_goal(x, y, theta)
+        return random_goal
+
+    # def make_random_goal(self):
+    #     keep_making_goal = True
+    #     while keep_making_goal:
+    #         x = random.uniform(-self.map_width, self.map_width)
+    #         y = random.uniform(-self.map_height, self.map_height)
+    #         theta = random.uniform(-np.pi, np.pi)
+
+    #         # Check if the new goal is far enough from previous locations
+    #         if not self.too_close_to_previous(x, y):
+    #             self.get_logger().info("Not too close to previous location.  Going to new Location")
+    #             new_goal = create_nav_goal(x, y, theta)
+    #             keep_making_goal = False
+
+    #     return new_goal
+
+    # def too_close_to_previous(self, goal_x, goal_y):
+    #     threshold_distance = 0.2
+
+    #     for prev_goal in self.previous_locations_visited:
+    #         distance = np.linalg.norm(
+    #             np.array([prev_goal[0], prev_goal[1]]) -
+    #             np.array([goal_x, goal_y])
+    #         )
+    #         if distance < threshold_distance:
+    #             return True
+    #     return False
+
+
 
 
 def create_nav_goal(x, y, theta):
