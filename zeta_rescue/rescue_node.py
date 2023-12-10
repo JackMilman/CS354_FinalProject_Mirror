@@ -11,6 +11,7 @@ import math
 import time
 import numpy as np
 from jmu_ros2_util import map_utils, pid
+from jmu_ros2_util.map_utils import Map
 from std_msgs.msg import Empty
 
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
@@ -56,8 +57,10 @@ class RescueNode(rclpy.node.Node):
         self.initial_pose = None
         self.current_pose = None
 
-        # self.create_subscription(OccupancyGrid, 'map',
-        #                          self.map_callback)
+        latching_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(
+            OccupancyGrid, 'map', self.map_callback, qos_profile=latching_qos)
+
         self.create_subscription(
             PoseWithCovarianceStamped, 'initialpose', self.initial_pose_callback, 10)
         self.create_subscription(
@@ -137,7 +140,7 @@ class RescueNode(rclpy.node.Node):
 
     def start_wandering(self):
         if not self.wandering:
-            first_goal = self.make_random_goal()
+            first_goal = self.make_new_map_goal()
             self.update_goal(first_goal)
             self.wandering = True
 
@@ -319,7 +322,7 @@ class RescueNode(rclpy.node.Node):
             self.search_for_victims()
         elif time_remaining:
             self.get_logger().info("RESCUEBOT CONTINUING SEARCH IN NEW POSITION")
-            new_goal = self.make_random_goal()
+            new_goal = self.make_new_map_goal()
             self.update_goal(new_goal)
         else:
             # hacky way to end the movement, fix later
@@ -426,7 +429,21 @@ class RescueNode(rclpy.node.Node):
         theta = random.uniform(-np.pi, np.pi)
         random_goal = create_nav_goal(x, y, theta)
         return random_goal
+    
+    def make_new_map_goal(self):
+        loop = True
+        map = self.map
+        while loop:
+            x = random.uniform(-map.width, map.width)
+            y = random.uniform(-map.height, map.height)
+            theta = 0 # why not.
 
+            goal_string = goal_type(x, y, map)
+            if goal_string is "free":
+                loop = False
+                return create_nav_goal(x, y, theta)
+            else:
+                self.get_logger().info("Invalid attempted random goal. Generating new possible goal position...")
     # def make_random_goal(self):
     #     keep_making_goal = True
     #     while keep_making_goal:
@@ -454,8 +471,52 @@ class RescueNode(rclpy.node.Node):
     #             return True
     #     return False
 
+    def map_callback(self, map_msg):
+            """Process the map message.
 
+            This doesn't really do anything useful, it is purely intended
+            as an illustration of the Map class.
 
+            """
+            self.get_logger().info("HEY WE GOT A MAP MESSAGE HURRAY")
+            if self.map is None:  # No need to do this every time map is published.
+
+                self.map = map_utils.Map(map_msg)
+
+                # Use numpy to calculate some statistics about the map:
+                total_cells = self.map.width * self.map.height
+                pct_occupied = np.count_nonzero(self.map.grid == 100) / total_cells * 100
+                pct_unknown = np.count_nonzero(self.map.grid == -1) / total_cells * 100
+                pct_free = np.count_nonzero(self.map.grid == 0) / total_cells * 100
+                map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
+                self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
+
+                # Here is how to access map cells to see if they are free:
+                # x = self.goal.pose.pose.position.x
+                # y = self.goal.pose.pose.position.y
+                # val = self.map.get_cell(x, y)
+                # if val == 100:
+                #     free = "occupied"
+                # elif val == 0:
+                #     free = "free"
+                # else:
+                #     free = "unknown"
+                # self.get_logger().info(f"HEY! Map position ({x:.2f}, {y:.2f}) is {free}")
+
+"""
+Used to check if a point in a map is free and returns a string representing what 
+that cell's value is in the map.
+"""
+def goal_type (x, y, map: Map):
+    free = "NOTHING, ERROR"
+    val = map.get_cell(x, y)
+    if val == 100:
+        free = "occupied"
+    elif val == 0:
+        free = "free"
+    else:
+        free = "unknown"
+    return free
 
 def create_nav_goal(x, y, theta):
     goal = NavigateToPose.Goal()
