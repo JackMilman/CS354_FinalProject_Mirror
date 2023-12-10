@@ -26,7 +26,7 @@ import rclpy.node
 from rclpy.action.client import ActionClient
 from rclpy.task import Future
 
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped, Pose
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, PointStamped, Pose, Point
 import tf_transformations
 from tf2_geometry_msgs import PoseStamped
 
@@ -80,7 +80,7 @@ class RescueNode(rclpy.node.Node):
         self.victim_messages = []
         self.victims_complete = []
 
-        self.goal = None
+        self.goal : NavigateToPose.Goal = None
         self.goal_future = Future()
 
         # Create the action client.
@@ -112,10 +112,8 @@ class RescueNode(rclpy.node.Node):
         self.victim_count = 0
         self.scan_timer = 0
 
-        self.map = None
-        self.previous_locations_visited = []
-        self.map_width = 0.5
-        self.map_height = 0.5
+        self.map : Map = None
+        self.explored_goals = [] # List of Points
 
     def image_callback(self, msg):
         self.taken_picture = msg
@@ -219,17 +217,16 @@ class RescueNode(rclpy.node.Node):
     def valid_victim(self, vic_pose: Pose):
         if self.current_pose is not None:
             dist_threshold = 2.5
-            robot_point = self.current_pose.pose.pose.position
             vic_point = vic_pose.position
-            tim_pose = tf2_geometry_msgs.PoseStamped()
-            tim_pose.header.frame_id = "camera_rgb_optical_frame"
-            tim_pose.pose = vic_pose
-            trans_pose = self.buffer.transform(tim_pose, "map")
-            height_check = trans_pose.pose.position.z > 0.3 and trans_pose.pose.position.z < .34
+            # tim_pose = tf2_geometry_msgs.PoseStamped()
+            # tim_pose.header.frame_id = "camera_rgb_optical_frame"
+            # tim_pose.pose = vic_pose
+            # trans_pose = self.buffer.transform(tim_pose, "map")
+            # height_check = trans_pose.pose.position.z > 0.3 and trans_pose.pose.position.z < .34
 
             distance = np.linalg.norm(np.array([0, 0]) - np.array([vic_point.x, vic_point.y]))
             # self.get_logger().info(f"Distance to possible victim: {distance: .02f}")
-            if distance < dist_threshold and height_check:
+            if distance < dist_threshold:
                 return True
         return False
 
@@ -274,7 +271,7 @@ class RescueNode(rclpy.node.Node):
             self.update_goal(next_goal)
 
     """
-    Transform (0, .75, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
+    Transform (0, .5, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
     """
 
     def victim_transform(self, pose, id):
@@ -289,7 +286,7 @@ class RescueNode(rclpy.node.Node):
             posit.x, posit.y, 0) @ transformer.rot_z(euler[2])  # yaw is euler[2]
         tran.add_transform("map", f"victim{id: d}", F_map_to_victim)
 
-        one_ahead_of_victim = np.array([0, -0.75, 0]) # negative due to rotation to face the victim
+        one_ahead_of_victim = np.array([0, -0.5, 0]) # negative due to rotation to face the victim
         goal = tran.transform(f"victim{id: d}", "map", one_ahead_of_victim)
         return goal
 
@@ -351,7 +348,7 @@ class RescueNode(rclpy.node.Node):
     """
 
     def wander_callback(self):
-        if self.time_elapsed > 2:
+        if self.time_elapsed > 2: # Wait 2 seconds before we start so that the initial pose can be properly set.
             if self.goal_future.done():
                 if self.completed_navs >= self.max_iterations and not self.going_home:
                     self.get_logger().info("RESCUEBOT GOING HOME!")
@@ -368,7 +365,9 @@ class RescueNode(rclpy.node.Node):
                     self.navigation_complete = False
                     if self.going_to_victim:
                         self.shoot_photo()
-                    self.previous_locations_visited.append([self.goal.pose.pose.position.x, self.goal.pose.pose.position.y])
+                    else:
+                        just_explored = self.goal.pose.pose.position
+                        self.explored_goals.append(just_explored)
                     self.do_next_navigation()
 
             elif not self.wandering:
@@ -422,62 +421,12 @@ class RescueNode(rclpy.node.Node):
     
     def initial_pose_callback(self, initial_pose: PoseWithCovarianceStamped):
         self.initial_pose = initial_pose
-
-    def make_random_goal(self):
-        x = random.uniform(-0.50, 0.50)
-        y = random.uniform(-0.50, 0.50)
-        theta = random.uniform(-np.pi, np.pi)
-        random_goal = create_nav_goal(x, y, theta)
-        return random_goal
+        self.explored_goals.append(initial_pose.pose.pose.position)
     
-    def make_new_map_goal(self):
-        loop = True
-        map = self.map
-        while loop:
-            x = random.uniform(-map.width, map.width)
-            y = random.uniform(-map.height, map.height)
-            theta = 0 # why not.
-
-            goal_string = goal_type(x, y, map)
-            if goal_string is "free":
-                loop = False
-                return create_nav_goal(x, y, theta)
-            else:
-                self.get_logger().info("Invalid attempted random goal. Generating new possible goal position...")
-    # def make_random_goal(self):
-    #     keep_making_goal = True
-    #     while keep_making_goal:
-    #         x = random.uniform(-self.map_width, self.map_width)
-    #         y = random.uniform(-self.map_height, self.map_height)
-    #         theta = random.uniform(-np.pi, np.pi)
-
-    #         # Check if the new goal is far enough from previous locations
-    #         if not self.too_close_to_previous(x, y):
-    #             self.get_logger().info("Not too close to previous location.  Going to new Location")
-    #             new_goal = create_nav_goal(x, y, theta)
-    #             keep_making_goal = False
-
-    #     return new_goal
-
-    # def too_close_to_previous(self, goal_x, goal_y):
-    #     threshold_distance = 0.2
-
-    #     for prev_goal in self.previous_locations_visited:
-    #         distance = np.linalg.norm(
-    #             np.array([prev_goal[0], prev_goal[1]]) -
-    #             np.array([goal_x, goal_y])
-    #         )
-    #         if distance < threshold_distance:
-    #             return True
-    #     return False
-
+    """
+    Processes the Map message.
+    """
     def map_callback(self, map_msg):
-            """Process the map message.
-
-            This doesn't really do anything useful, it is purely intended
-            as an illustration of the Map class.
-
-            """
             self.get_logger().info("HEY WE GOT A MAP MESSAGE HURRAY")
             if self.map is None:  # No need to do this every time map is published.
 
@@ -491,17 +440,53 @@ class RescueNode(rclpy.node.Node):
                 map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
                 self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
 
-                # Here is how to access map cells to see if they are free:
-                # x = self.goal.pose.pose.position.x
-                # y = self.goal.pose.pose.position.y
-                # val = self.map.get_cell(x, y)
-                # if val == 100:
-                #     free = "occupied"
-                # elif val == 0:
-                #     free = "free"
-                # else:
-                #     free = "unknown"
-                # self.get_logger().info(f"HEY! Map position ({x:.2f}, {y:.2f}) is {free}")
+    def make_random_goal(self):
+        x = random.uniform(-0.50, 0.50)
+        y = random.uniform(-0.50, 0.50)
+        theta = random.uniform(-np.pi, np.pi)
+        random_goal = create_nav_goal(x, y, theta)
+        return random_goal
+    
+    def make_new_map_goal(self):
+        map = self.map
+        while True:
+            row = random.uniform(-map.width, map.width) # random row within the map's cells
+            col = random.uniform(-map.height, map.height) # random column within the map's cells
+            theta = 0 # why not.
+
+            cell = map.cell_position(row, col) # X and Y tuple of the center of our randomly chosen cell
+            if self.good_goal(cell[0], cell[1]):
+                new_goal = create_nav_goal(cell[0], cell[1], theta)
+                return new_goal
+            # else:
+            #     self.get_logger().info("Invalid attempted random goal. Generating new possible goal position...")
+
+    """
+    Check to make sure a goal is good to navigate to. Only return true if the position is free and it is 
+    not too close to a previously-chosen random goal.
+    """
+    def good_goal(self, x, y):
+        goal_string = goal_type(x, y, self.map)
+        if goal_string == "free":
+            prev_goals = self.explored_goals
+            for prev_goal in prev_goals:
+                if self.too_close(x, y, prev_goal):
+                    return False
+        else:
+            return False
+        return True
+    
+    """
+    Returns true only if we are too close to a point we have already completed a navigation to.
+    """
+    def too_close(self, x, y, prev_goal: Point):
+        dist_threshold = 1.0
+        distance = np.linalg.norm(
+                np.array([x, y]) -
+                np.array([prev_goal.x, prev_goal.y])
+            )
+        # return true if the distance is too close, aka the distance is less than the threshold.
+        return distance < dist_threshold
 
 """
 Used to check if a point in a map is free and returns a string representing what 
