@@ -218,9 +218,15 @@ class RescueNode(rclpy.node.Node):
             dist_threshold = 2.5
             robot_point = self.current_pose.pose.pose.position
             vic_point = vic_pose.position
+            tim_pose = tf2_geometry_msgs.PoseStamped()
+            tim_pose.header.frame_id = "camera_rgb_optical_frame"
+            tim_pose.pose = vic_pose
+            trans_pose = self.buffer.transform(tim_pose, "map")
+            height_check = trans_pose.pose.position.z > 0.3 and trans_pose.pose.position.z < .34
+
             distance = np.linalg.norm(np.array([0, 0]) - np.array([vic_point.x, vic_point.y]))
             # self.get_logger().info(f"Distance to possible victim: {distance: .02f}")
-            if distance < dist_threshold:
+            if distance < dist_threshold and height_check:
                 return True
         return False
 
@@ -229,7 +235,7 @@ class RescueNode(rclpy.node.Node):
     """
 
     def duplicate_victim(self, new_point, existing_victims):
-        threshold = 0.3
+        threshold = 0.47
         for victim in existing_victims:
             distance = np.linalg.norm(
                 np.array([victim.point.point.x, victim.point.point.y]) -
