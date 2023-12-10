@@ -41,6 +41,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 import tf2_geometry_msgs  # Import is needed, even though not used explicitly
 from zeta_rescue import transformer
+from zeta_rescue import victim_namer as vn
 
 class RescueNode(rclpy.node.Node):
 
@@ -153,7 +154,7 @@ class RescueNode(rclpy.node.Node):
         """
         Tells the robot to navigate toward the goal using an action client
         """
-        
+
         # self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
         self.ac.wait_for_server()
         # self.get_logger().info("NAVIGATION SERVER AVAILABLE...")
@@ -190,7 +191,7 @@ class RescueNode(rclpy.node.Node):
                 victim_info.id = self.victim_count
                 self.victim_count += 1
                 victim_info.point = trans_point_stamped
-                victim_info.description = "Ronald the Journalist"
+                victim_info.description = vn.give_name() # gives a random name from victim_namer.py. Completely useless to the function of the program.
 
                 self.victim_poses.append(victim_pose)
                 self.victim_messages.append(victim_info)
