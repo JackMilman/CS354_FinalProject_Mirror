@@ -125,25 +125,20 @@ class RescueNode(rclpy.node.Node):
 
     def get_future(self):
         return self.node_future
-    
-    def map_callback (self, map_msg):
-        self.map = map_msg
-
-    """
-    Starts the wandering process. Should only be used if the robot has not already started wandering.
-    """
 
     def start_wandering(self):
+        """
+        Starts the wandering process. Should only be used if the robot has not already started wandering.
+        """
         if not self.wandering:
             first_goal = self.make_new_map_goal()
             self.update_goal(first_goal)
             self.wandering = True
 
-    """
-    Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
-    """
-
     def update_goal(self, new_goal: NavigateToPose.Goal):
+        """
+        Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
+        """
         self.goal = new_goal
 
         orient = self.goal.pose.pose.orientation
@@ -154,11 +149,11 @@ class RescueNode(rclpy.node.Node):
             f"Goal is: {self.goal.pose.pose.position.x: 0.2f}, {self.goal.pose.pose.position.y: 0.2f}, Theta = {goal_theta[2]: .02f}")
         self.send_goal()
 
-    """
-    Tells the robot to navigate toward the goal using an action client
-    """
-
     def send_goal(self):
+        """
+        Tells the robot to navigate toward the goal using an action client
+        """
+        
         # self.get_logger().info("WAITING FOR NAVIGATION SERVER...")
         self.ac.wait_for_server()
         # self.get_logger().info("NAVIGATION SERVER AVAILABLE...")
@@ -167,11 +162,10 @@ class RescueNode(rclpy.node.Node):
 
         self.goal_future = self.ac.send_goal_async(self.goal)
 
-    """
-    This creates a new victim in the robot's world-knowledge and hopefully doesn't create repeats. Returns true if the victim was new.
-    """
-
     def make_victim(self, pose):
+        """
+        This creates a new victim in the robot's world-knowledge and hopefully doesn't create repeats. Returns true if the victim was new.
+        """
         victim_pose = tf2_geometry_msgs.PoseStamped()
         victim_pose.header.frame_id = "camera_rgb_optical_frame"
         victim_pose.pose = pose
@@ -208,10 +202,11 @@ class RescueNode(rclpy.node.Node):
             # self.get_logger().warn(str(e))
             pass
         return False
-    """
-    Only accepts victims that are within a certain distance of the robot and also in valid positions.
-    """
+    
     def valid_victim(self, vic_pose: Pose):
+        """
+        Only accepts victims that are within a certain distance of the robot and also in valid positions.
+        """
         if self.current_pose is not None:
             dist_threshold = 2.0
             vic_point = vic_pose.position
@@ -227,11 +222,10 @@ class RescueNode(rclpy.node.Node):
                 return True
         return False
 
-    """
-    Checks if a victim is a duplicate, and returns true only if it *is* a duplicate
-    """
-
     def duplicate_victim(self, new_point, existing_victims):
+        """
+        Checks if a victim is a duplicate, and returns true only if it *is* a duplicate
+        """
         threshold = 0.47
         for victim in existing_victims:
             distance = np.linalg.norm(
@@ -242,11 +236,10 @@ class RescueNode(rclpy.node.Node):
                 return True
         return False
 
-    """
-    Checks if there are more detected victims and, if so, navs toward them to get a picture.
-    """
-
     def search_for_victims(self):
+        """
+        Checks if there are more detected victims and, if so, navs toward them to get a picture.
+        """
         i = self.victim_search_id
         if i < len(self.victim_poses):
             self.going_to_victim = True
@@ -267,11 +260,10 @@ class RescueNode(rclpy.node.Node):
                 goal[0], goal[1], yaw - (np.pi / 2))  # X, Y, Theta Z
             self.update_goal(next_goal)
 
-    """
-    Transform (0, .5, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
-    """
-
     def victim_transform(self, pose, id):
+        """
+        Transform (0, .5, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
+        """
         tran = transformer.Transformer("map")
         posit = pose.pose.position
         orient = pose.pose.orientation
@@ -287,11 +279,10 @@ class RescueNode(rclpy.node.Node):
         goal = tran.transform(f"victim{id: d}", "map", one_ahead_of_victim)
         return goal
 
-    """
-    Shoots a photograph of the victim, sets going_to_victim to false, and adds the victim to the victims_complete list
-    """
-
     def shoot_photo(self):
+        """
+        Shoots a photograph of the victim, sets going_to_victim to false, and adds the victim to the victims_complete list
+        """
         self.going_to_victim = False
         self.get_logger().info(
             f"Len victim_messages: {len(self.victim_messages): d}")
@@ -302,11 +293,10 @@ class RescueNode(rclpy.node.Node):
         self.victim_search_id += 1
         self.get_logger().info("Picture shot")
 
-    """
-    Logic for determining which goal to go to next.
-    """
-
     def do_next_navigation(self):
+        """
+        Logic for determining which goal to go to next.
+        """
         victims_remaining = len(self.victims_complete) < len(self.victim_messages)
         self.get_logger().info(
             f"NUMBER OF VICTIMS LEFT: {len(self.victim_messages) - len(self.victims_complete): d}")
@@ -322,10 +312,10 @@ class RescueNode(rclpy.node.Node):
             # hacky way to end the movement, fix later
             self.completed_navs = 1000000000000000
 
-    """
-    Scans for victims within visual sight range.
-    """
     def scanner_callback(self, aruco_msg: ArucoMarkers):
+        """
+        Scans for victims within visual sight range.
+        """
         if self.wandering and self.scan_timer > 0: # Hacky way to do it so we only do this scan when wandering
             self.scan_timer = 0
             for pose in aruco_msg.poses:
@@ -340,11 +330,10 @@ class RescueNode(rclpy.node.Node):
                         self.search_for_victims()
                         self.get_logger().info(f"GOING TO NEW VICTIM")
 
-    """
-    This timer is keeping track of the overall status of the node's search.
-    """
-
     def wander_callback(self):
+        """
+        This timer is keeping track of the overall status of the node's search.
+        """
         if self.time_elapsed > 2: # Wait 2 seconds before we start so that the initial pose can be properly set.
             if self.goal_future.done():
                 if self.completed_navs >= self.max_iterations and not self.going_home:
@@ -373,11 +362,10 @@ class RescueNode(rclpy.node.Node):
         self.time_elapsed += 1
         # self.get_logger().info(f"TIME ELAPSED: {self.time_elapsed: d}")
 
-    """
-    This timer will periodically check in on the progress of navigation, ten times per second.
-    """
-
     def navigation_callback(self):
+        """
+        This timer will periodically check in on the progress of navigation, ten times per second.
+        """
         time_remaining = self.time_elapsed < self.timeout
         if not self.going_home and not time_remaining:
             self.goal_future.result().cancel_goal_async()
@@ -421,27 +409,28 @@ class RescueNode(rclpy.node.Node):
         self.initial_pose = initial_pose
         self.explored_goals.append(initial_pose.pose.pose.position)
     
-    """
-    Processes the Map message.
-    """
     def map_callback(self, map_msg : OccupancyGrid):
-            self.get_logger().info("HEY WE GOT A MAP MESSAGE HURRAY")
-            if self.map is None:  # No need to do this every time map is published.
+        """
+        Processes the Map message.
+        """
+        self.get_logger().info("HEY WE GOT A MAP MESSAGE HURRAY")
+        if self.map is None:  # No need to do this every time map is published.
 
-                self.map = map_utils.Map(map_msg)
+            self.map = map_utils.Map(map_msg)
 
-                # Use numpy to calculate some statistics about the map:
-                total_cells = self.map.width * self.map.height
-                pct_occupied = np.count_nonzero(self.map.grid == 100) / total_cells * 100
-                pct_unknown = np.count_nonzero(self.map.grid == -1) / total_cells * 100
-                pct_free = np.count_nonzero(self.map.grid == 0) / total_cells * 100
-                map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
-                self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
+            # Use numpy to calculate some statistics about the map:
+            total_cells = self.map.width * self.map.height
+            pct_occupied = np.count_nonzero(self.map.grid == 100) / total_cells * 100
+            pct_unknown = np.count_nonzero(self.map.grid == -1) / total_cells * 100
+            pct_free = np.count_nonzero(self.map.grid == 0) / total_cells * 100
+            map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
+            self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
     
-    """
-    Generates a new goal within the map by picking a random cell in the map's grid and comparing the X and Y of that position to a list of previously-reached positions
-    """
+    
     def make_new_map_goal(self):
+        """
+        Generates a new goal within the map by picking a random cell in the map's grid and comparing the X and Y of that position to a list of previously-reached positions
+        """
         map = self.map
         while True:
             row = random.uniform(-map.width, map.width) # random row within the map's cells
@@ -455,11 +444,11 @@ class RescueNode(rclpy.node.Node):
             # else:
             #     self.get_logger().info("Invalid attempted random goal. Generating new possible goal position...")
 
-    """
-    Check to make sure a goal is good to navigate to. Only return true if the position is free and it is 
-    not too close to a previously-chosen random goal.
-    """
     def good_goal(self, x, y):
+        """
+        Check to make sure a goal is good to navigate to. Only return true if the position is free and it is 
+        not too close to a previously-chosen random goal.
+        """
         goal_string = goal_type(x, y, self.map)
         if goal_string == "free":
             prev_goals = self.explored_goals
@@ -470,10 +459,10 @@ class RescueNode(rclpy.node.Node):
             return False
         return True
     
-    """
-    Returns true only if we are too close to a point we have already completed a navigation to.
-    """
     def too_close(self, x, y, prev_goal: Point):
+        """
+        Returns true only if we are too close to a point we have already completed a navigation to.
+        """
         dist_threshold = 1.0
         distance = np.linalg.norm(
                 np.array([x, y]) -
@@ -482,11 +471,11 @@ class RescueNode(rclpy.node.Node):
         # return true if the distance is too close, aka the distance is less than the threshold.
         return distance < dist_threshold
 
-"""
-Used to check if a point in a map is free and returns a string representing what 
-that cell's value is in the map.
-"""
 def goal_type (x, y, map: Map):
+    """
+    Used to check if a point in a map is free and returns a string representing what 
+    that cell's value is in the map.
+    """
     free = "NOTHING, ERROR"
     val = map.get_cell(x, y)
     if val == 100:
@@ -526,7 +515,6 @@ def create_nav_goal_quat(x, y, quaternion):
 def main():
     rclpy.init()
 
-    # timeout = float('inf')
     # test parameter for determining how long to randomly wander, change later
     iterations = 2
     node = RescueNode(iterations)
