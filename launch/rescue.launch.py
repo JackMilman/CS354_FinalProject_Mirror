@@ -24,6 +24,13 @@ def generate_launch_description():
         DeclareLaunchArgument('time_limit', default_value='360'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         
+        # Start initial pose setter
+        Node(
+            package="zeta_competition",
+            executable="set_initial_pose",
+            output="screen",
+            parameters=[LaunchConfiguration('initial_pose')]
+        ),
         Node(
             package="zeta_rescue",
             executable="rescue_node",
@@ -32,14 +39,6 @@ def generate_launch_description():
                         #  'initial_pose': LaunchConfiguration('initial_pose'),
                          'time_limit':  LaunchConfiguration('time_limit'),
                          'use_sim_time': LaunchConfiguration('use_sim_time'),}]
-        ),
-
-        # Start initial pose setter
-        Node(
-            package="zeta_competition",
-            executable="set_initial_pose",
-            output="screen",
-            parameters=[LaunchConfiguration('initial_pose')]
         )
     ])
 

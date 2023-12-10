@@ -58,6 +58,8 @@ class RescueNode(rclpy.node.Node):
         # self.create_subscription(OccupancyGrid, 'map',
         #                          self.map_callback)
         self.create_subscription(
+            PoseWithCovarianceStamped, 'initialpose', self.initial_pose_callback, 10)
+        self.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, 10)
         self.create_subscription(
             ArucoMarkers, 'aruco_markers', self.scanner_callback, 10)
@@ -133,6 +135,7 @@ class RescueNode(rclpy.node.Node):
         if not self.wandering:
             first_goal = make_random_goal()
             self.update_goal(first_goal)
+            self.wandering = True
 
     """
     Sets the goal of the robot to the new_goal, then tells the robot to navigate toward it by calling send_goal()
@@ -316,7 +319,7 @@ class RescueNode(rclpy.node.Node):
     Scans for victims within visual sight range.
     """
     def scanner_callback(self, aruco_msg: ArucoMarkers):
-        if self.scan_timer >= 7: # Hacky way to do it so we only do this scan once every 7th callback
+        if self.wandering and self.scan_timer > 0: # Hacky way to do it so we only do this scan when wandering
             self.scan_timer = 0
             for pose in aruco_msg.poses:
                 if not self.valid_victim(pose):
@@ -335,27 +338,28 @@ class RescueNode(rclpy.node.Node):
     """
 
     def wander_callback(self):
-        if self.goal_future.done():
-            if self.completed_navs >= self.max_iterations and not self.going_home:
-                self.get_logger().info("RESCUEBOT GOING HOME!")
-                self.goal_future.result().cancel_goal_async()
-                initial_x = self.initial_pose.pose.pose.position.x
-                initial_y = self.initial_pose.pose.pose.position.y
-                initial_orient = self.initial_pose.pose.pose.orientation
-                home = create_nav_goal_quat(
-                    initial_x, initial_y, initial_orient)
-                self.update_goal(home)
-                self.going_home = True
-            # If an individual navigation goal is complete.
-            elif self.navigation_complete:
-                self.navigation_complete = False
-                if self.going_to_victim:
-                    self.shoot_photo()
-                self.do_next_navigation()
+        if self.time_elapsed > 2:
+            if self.goal_future.done():
+                if self.completed_navs >= self.max_iterations and not self.going_home:
+                    self.get_logger().info("RESCUEBOT GOING HOME!")
+                    self.goal_future.result().cancel_goal_async()
+                    initial_x = self.initial_pose.pose.pose.position.x
+                    initial_y = self.initial_pose.pose.pose.position.y
+                    initial_orient = self.initial_pose.pose.pose.orientation
+                    home = create_nav_goal_quat(
+                        initial_x, initial_y, initial_orient)
+                    self.update_goal(home)
+                    self.going_home = True
+                # If an individual navigation goal is complete.
+                elif self.navigation_complete:
+                    self.navigation_complete = False
+                    if self.going_to_victim:
+                        self.shoot_photo()
+                    self.do_next_navigation()
 
-        elif not self.wandering:
-            self.get_logger().info("RESCUEBOT ROLLING OUT")
-            self.start_wandering()
+            elif not self.wandering:
+                self.get_logger().info("RESCUEBOT ROLLING OUT")
+                self.start_wandering()
         self.time_elapsed += 1
         # self.get_logger().info(f"TIME ELAPSED: {self.time_elapsed: d}")
 
@@ -396,38 +400,14 @@ class RescueNode(rclpy.node.Node):
             # elif time.time() - self.start_time > self.timeout:
             #     self.get_logger().info("TAKING TOO LONG. CANCELLING GOAL!")
             #     self.cancel_future = self.goal_future.result().cancel_goal_async()
-        self.scan_timer += 1
+        # self.scan_timer += 1
 
     def pose_callback(self, amcl_pose: PoseWithCovarianceStamped):
         self.current_pose = amcl_pose
-        # x = amcl_pose.pose.pose.position.x
-        # y = amcl_pose.pose.pose.position.y
-        # self.get_logger().info(f"Robot Position: {x: .02f}, {y: .02f}")
-        if self.initial_pose is None:
-            self.initial_pose = amcl_pose
-            self.get_logger().info("Initial pose set")
+        self.scan_timer += 1
     
-    """
-    This code taken from the set_initial_pose.py file in zeta_competition. We use it
-    to set our initial pose at the very start of the runtime.
-    """
-    def create_pose_w_covariance_stamped(self, x, y, theta, pos_variance, angle_variance):
-        pose = PoseWithCovarianceStamped()
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.header.frame_id = 'map'
-        pose.pose.pose.position.x = x
-        pose.pose.pose.position.y = y
-
-        quaternion = tf_transformations.quaternion_from_euler(0, 0, theta, 'rxyz')
-        pose.pose.pose.orientation.x = quaternion[0]
-        pose.pose.pose.orientation.y = quaternion[1]
-        pose.pose.pose.orientation.z = quaternion[2]
-        pose.pose.pose.orientation.w = quaternion[3]
-
-        pose.pose.covariance[0] = pos_variance
-        pose.pose.covariance[7] = pos_variance
-        pose.pose.covariance[35] = angle_variance
-        return pose
+    def initial_pose_callback(self, initial_pose: PoseWithCovarianceStamped):
+        self.initial_pose = initial_pose
 
 def make_random_goal():
     x = random.uniform(-0.50, 0.50)
