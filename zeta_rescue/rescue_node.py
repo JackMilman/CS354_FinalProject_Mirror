@@ -191,7 +191,8 @@ class RescueNode(rclpy.node.Node):
                 victim_info.id = self.victim_count
                 self.victim_count += 1
                 victim_info.point = trans_point_stamped
-                victim_info.description = vn.give_name() # gives a random name from victim_namer.py. Completely useless to the function of the program.
+                # victim_info.description = vn.give_name() # gives a random name from victim_namer.py. Completely useless to the function of the program.
+                victim_info.description = "Jonald the Journalist"
 
                 self.victim_poses.append(victim_pose)
                 self.victim_messages.append(victim_info)
