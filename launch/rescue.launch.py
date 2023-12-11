@@ -14,30 +14,16 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    this_path = get_package_share_directory('zeta_competition')
-    default_map_path = os.path.join(this_path, 'maps', 'room_practice.yaml')
-    default_pose = os.path.join(this_path, 'config', 'sim_initial_pose.yaml')
 
     return LaunchDescription([
-        DeclareLaunchArgument('map', default_value=default_map_path),
-        DeclareLaunchArgument('initial_pose', default_value=default_pose),
         DeclareLaunchArgument('time_limit', default_value='360'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         
-        # Start initial pose setter
-        Node(
-            package="zeta_competition",
-            executable="set_initial_pose",
-            output="screen",
-            parameters=[LaunchConfiguration('initial_pose')]
-        ),
         Node(
             package="zeta_rescue",
             executable="rescue_node",
             output="screen",
-            parameters=[{'map': LaunchConfiguration('map'),
-                        #  'initial_pose': LaunchConfiguration('initial_pose'),
-                         'time_limit':  LaunchConfiguration('time_limit'),
+            parameters=[{'time_limit':  LaunchConfiguration('time_limit'),
                          'use_sim_time': LaunchConfiguration('use_sim_time'),}]
         )
     ])

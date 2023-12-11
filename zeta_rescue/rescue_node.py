@@ -61,8 +61,8 @@ class RescueNode(rclpy.node.Node):
             OccupancyGrid, 'map', self.map_callback, qos_profile=latching_qos)
         # self.create_subscription(
         #     OccupancyGrid, 'costmap_updates', self.costmap_callback, 10)
-        self.create_subscription(
-            PoseWithCovarianceStamped, 'initialpose', self.initial_pose_callback, 10)
+        # self.create_subscription(
+        #     PoseWithCovarianceStamped, 'initialpose', self.initial_pose_callback, 10)
         self.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, 10)
         self.create_subscription(
@@ -97,6 +97,7 @@ class RescueNode(rclpy.node.Node):
         # Used to keep track of the entire node's progress and to exit when we want to.
         self.node_future = Future()
         self.going_home = False
+        self.we_are_home = False
 
         self.time_elapsed = 0
         self.timeout = timeout - 20
@@ -128,6 +129,9 @@ class RescueNode(rclpy.node.Node):
         for victim in self.victims_complete:
             self.victim_publisher.publish(victim)
         self.get_logger().info("REPORT COMPLETE")
+        if self.we_are_home:
+            self.get_logger().info("All these victims lost, like...tears, in the rain. Time... to die.")
+            self.node_future.set_result(True)
 
     def get_future(self):
         return self.node_future
@@ -403,7 +407,9 @@ class RescueNode(rclpy.node.Node):
 
             elif self.going_home:
                 if self.goal_future.result().status == GoalStatus.STATUS_SUCCEEDED:
-                    self.node_future.set_result(True)
+                    # self.node_future.set_result(True)
+                    self.get_logger().info("We are now Home. Yippee.")
+                    self.we_are_home = True
 
             # elif time.time() - self.start_time > self.timeout:
             #     self.get_logger().info("TAKING TOO LONG. CANCELLING GOAL!")
@@ -413,11 +419,14 @@ class RescueNode(rclpy.node.Node):
     def pose_callback(self, amcl_pose: PoseWithCovarianceStamped):
         self.current_pose = amcl_pose
         self.scan_timer += 1
+        if self.initial_pose is None:
+            self.initial_pose = amcl_pose
+            self.explored_goals.append(amcl_pose.pose.pose.position)
     
-    def initial_pose_callback(self, initial_pose: PoseWithCovarianceStamped):
-        self.initial_pose = initial_pose
-        self.current_pose = initial_pose
-        self.explored_goals.append(initial_pose.pose.pose.position)
+    # def initial_pose_callback(self, initial_pose: PoseWithCovarianceStamped):
+    #     self.initial_pose = initial_pose
+    #     self.current_pose = initial_pose
+    #     self.explored_goals.append(initial_pose.pose.pose.position)
     
     def map_callback(self, map_msg : OccupancyGrid):
         """
@@ -460,21 +469,19 @@ class RescueNode(rclpy.node.Node):
         """
         map = self.map
         random_iterations = 0
-        cur_point : Point = self.current_pose.pose.pose.position
-        cur_row_col = map.cell_index(cur_point.x, cur_point.y)
-        cur_row = cur_row_col[0]
-        cur_col = cur_row_col[1]
-        while True:
-            # generates points closer to the current column
 
+        while True:
             row = random.randint(0, map.height) # random row within the map's cells
             col = random.randint(0, map.width) # random column within the map's cells
 
-            orient = self.current_pose.pose.pose.orientation
-            orientation_array = np.array([orient.x, orient.y, orient.z, orient.w])
-            euler = tf_transformations.euler_from_quaternion(orientation_array)
-            rand_rot = random.uniform(-np.pi / 2, np.pi / 2)
-            theta = euler[2] + rand_rot # Current orientation plus or minus anything from 0 to a quarter rotation. Totally arbitrary amount.
+            if self.current_pose is not None:
+                orient = self.current_pose.pose.pose.orientation
+                orientation_array = np.array([orient.x, orient.y, orient.z, orient.w])
+                euler = tf_transformations.euler_from_quaternion(orientation_array)
+                rand_rot = random.uniform(-np.pi / 2, np.pi / 2)
+                theta = euler[2] + rand_rot # Current orientation plus or minus anything from 0 to a quarter rotation. Totally arbitrary amount.
+            else:
+                theta = 0
 
             cell = map.cell_position(row, col) # X and Y tuple of the center of our randomly chosen cell
             if self.good_goal(cell[0], cell[1]):
@@ -500,6 +507,8 @@ class RescueNode(rclpy.node.Node):
         """
         goal_string = goal_type(x, y, self.map)
         if goal_string == "free":
+            if self.current_pose is None: # Early exit for first location, quick and dirty
+                return True
             prev_goals = self.explored_goals
             for prev_goal in prev_goals:
                 if self.too_close(x, y, prev_goal):
