@@ -112,6 +112,8 @@ class RescueNode(rclpy.node.Node):
 
         self.map : Map = None
         self.explored_goals = [] # List of Points
+        self.near_check_iterations = 0
+        self.near_check_threshold = 25
 
     def image_callback(self, msg):
         self.taken_picture = msg
@@ -210,7 +212,7 @@ class RescueNode(rclpy.node.Node):
         Only accepts victims that are within a certain distance of the robot and also in valid positions.
         """
         if self.current_pose is not None:
-            dist_threshold = 2.0
+            dist_threshold = 1.5
             vic_point = vic_pose.position
             # tim_pose = tf2_geometry_msgs.PoseStamped()
             # tim_pose.header.frame_id = "camera_rgb_optical_frame"
@@ -264,7 +266,7 @@ class RescueNode(rclpy.node.Node):
 
     def victim_transform(self, pose, id):
         """
-        Transform (0, .5, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
+        Transform (0, .75, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
         """
         tran = transformer.Transformer("map")
         posit = pose.pose.position
@@ -277,7 +279,7 @@ class RescueNode(rclpy.node.Node):
             posit.x, posit.y, 0) @ transformer.rot_z(euler[2])  # yaw is euler[2]
         tran.add_transform("map", f"victim{id: d}", F_map_to_victim)
 
-        one_ahead_of_victim = np.array([0, -0.5, 0]) # negative due to rotation to face the victim
+        one_ahead_of_victim = np.array([0, -0.75, 0]) # negative due to rotation to face the victim
         goal = tran.transform(f"victim{id: d}", "map", one_ahead_of_victim)
         return goal
 
@@ -318,7 +320,7 @@ class RescueNode(rclpy.node.Node):
         """
         Scans for victims within visual sight range.
         """
-        if self.wandering and self.scan_timer > 0: # Hacky way to do it so we only do this scan when wandering
+        if self.wandering and self.scan_timer > 0 and not self.going_home: # Hacky way to do it so we only do this scan when wandering
             self.scan_timer = 0
             for pose in aruco_msg.poses:
                 if not self.valid_victim(pose):
@@ -409,6 +411,7 @@ class RescueNode(rclpy.node.Node):
     
     def initial_pose_callback(self, initial_pose: PoseWithCovarianceStamped):
         self.initial_pose = initial_pose
+        self.current_pose = initial_pose
         self.explored_goals.append(initial_pose.pose.pose.position)
     
     def map_callback(self, map_msg : OccupancyGrid):
@@ -437,7 +440,12 @@ class RescueNode(rclpy.node.Node):
         while True:
             row = random.uniform(-map.width, map.width) # random row within the map's cells
             col = random.uniform(-map.height, map.height) # random column within the map's cells
-            theta = 0 # why not.
+
+            orient = self.current_pose.pose.pose.orientation
+            orientation_array = np.array([orient.x, orient.y, orient.z, orient.w])
+            euler = tf_transformations.euler_from_quaternion(orientation_array)
+            rand_rot = random.uniform(-np.pi / 2, np.pi / 2)
+            theta = euler[2] + rand_rot # Current orientation plus or minus one quarter rotation. Totally arbitrary amount.
 
             cell = map.cell_position(row, col) # X and Y tuple of the center of our randomly chosen cell
             if self.good_goal(cell[0], cell[1]):
@@ -457,10 +465,31 @@ class RescueNode(rclpy.node.Node):
             for prev_goal in prev_goals:
                 if self.too_close(x, y, prev_goal):
                     return False
+            while self.near_check_iterations < self.near_check_threshold:
+                self.get_logger().info("CHECKING IF CLOSE ENOUGH...")
+                near = self.near_self(x, y)
+                self.near_check_iterations += 1
+                if near: # if the goal we've found is close enough to ourself to be worth navigating to
+                    self.near_check_iterations = 0
+                    return True
         else:
             return False
-        return True
+        return True # If we have run out of checks and just want any possible free point
     
+    def near_self(self, x, y):
+        """
+        Returns true only if the point we've generated is close enough to our current position.
+        """
+        dist_threshold = 0.5
+        current_pos : Point = self.current_pose.pose.pose.position
+        distance = np.linalg.norm(
+                np.array([x, y]) -
+                np.array([current_pos.x, current_pos.y])
+            )
+        # return true if the distance is near ourself, aka the distance is less than the threshold.
+        self.get_logger().info(f"Distance to position: {distance}")
+        return distance < dist_threshold
+
     def too_close(self, x, y, prev_goal: Point):
         """
         Returns true only if we are too close to a point we have already completed a navigation to.
