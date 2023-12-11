@@ -460,9 +460,15 @@ class RescueNode(rclpy.node.Node):
         """
         map = self.map
         random_iterations = 0
+        cur_point : Point = self.current_pose.pose.pose.position
+        cur_row_col = map.cell_index(cur_point.x, cur_point.y)
+        cur_row = cur_row_col[0]
+        cur_col = cur_row_col[1]
         while True:
-            row = random.randint(-map.width, map.width) # random row within the map's cells
-            col = random.randint(-map.height, map.height) # random column within the map's cells
+            # generates points closer to the current column
+
+            row = random.randint(0, map.height) # random row within the map's cells
+            col = random.randint(0, map.width) # random column within the map's cells
 
             orient = self.current_pose.pose.pose.orientation
             orientation_array = np.array([orient.x, orient.y, orient.z, orient.w])
