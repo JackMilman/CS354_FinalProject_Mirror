@@ -78,7 +78,7 @@ class RescueNode(rclpy.node.Node):
         self.victim_messages = []
         self.victims_complete = []
 
-        self.goal : NavigateToPose.Goal = None
+        self.goal : NavigateToPose.Goal = NavigateToPose.Goal()
         self.goal_future = Future()
 
         # Create the action client.
@@ -96,7 +96,6 @@ class RescueNode(rclpy.node.Node):
         self.node_future = Future()
         self.going_home = False
 
-        # self.map = None
         self.time_elapsed = 0
         self.timeout = timeout - 20
 
@@ -445,10 +444,11 @@ class RescueNode(rclpy.node.Node):
             orientation_array = np.array([orient.x, orient.y, orient.z, orient.w])
             euler = tf_transformations.euler_from_quaternion(orientation_array)
             rand_rot = random.uniform(-np.pi / 2, np.pi / 2)
-            theta = euler[2] + rand_rot # Current orientation plus or minus one quarter rotation. Totally arbitrary amount.
+            theta = euler[2] + rand_rot # Current orientation plus or minus anything from 0 to a quarter rotation. Totally arbitrary amount.
 
             cell = map.cell_position(row, col) # X and Y tuple of the center of our randomly chosen cell
             if self.good_goal(cell[0], cell[1]):
+                self.near_check_iterations = 0
                 new_goal = create_nav_goal(cell[0], cell[1], theta)
                 return new_goal
             # else:
@@ -465,22 +465,26 @@ class RescueNode(rclpy.node.Node):
             for prev_goal in prev_goals:
                 if self.too_close(x, y, prev_goal):
                     return False
-            while self.near_check_iterations < self.near_check_threshold:
+            checks_left = self.near_check_iterations < self.near_check_threshold
+            if checks_left:
                 self.get_logger().info("CHECKING IF CLOSE ENOUGH...")
                 near = self.near_self(x, y)
                 self.near_check_iterations += 1
                 if near: # if the goal we've found is close enough to ourself to be worth navigating to
                     self.near_check_iterations = 0
                     return True
+                else: # if we are not out of near_checks but this particular one was not the play
+                    return False
+            else: # if we are out of near_checks and just want any random point that hasn't been kicked out by the too_close check
+                return True
         else:
             return False
-        return True # If we have run out of checks and just want any possible free point
     
     def near_self(self, x, y):
         """
         Returns true only if the point we've generated is close enough to our current position.
         """
-        dist_threshold = 0.5
+        dist_threshold = 1.5
         current_pos : Point = self.current_pose.pose.pose.position
         distance = np.linalg.norm(
                 np.array([x, y]) -
@@ -494,10 +498,8 @@ class RescueNode(rclpy.node.Node):
         """
         Returns true only if we are too close to a point we have already completed a navigation to.
         """
-        dist_threshold = 1.0
-        distance = np.linalg.norm(
-                np.array([x, y]) -
-                np.array([prev_goal.x, prev_goal.y])
+        dist_threshold = 2.0
+        distance = np.linalg.norm(np.array([x, y]) -np.array([prev_goal.x, prev_goal.y])
             )
         # return true if the distance is too close, aka the distance is less than the threshold.
         return distance < dist_threshold
