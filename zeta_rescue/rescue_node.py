@@ -59,6 +59,8 @@ class RescueNode(rclpy.node.Node):
         latching_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
             OccupancyGrid, 'map', self.map_callback, qos_profile=latching_qos)
+        # self.create_subscription(
+        #     OccupancyGrid, 'costmap_updates', self.costmap_callback, 10)
         self.create_subscription(
             PoseWithCovarianceStamped, 'initialpose', self.initial_pose_callback, 10)
         self.create_subscription(
@@ -112,7 +114,9 @@ class RescueNode(rclpy.node.Node):
         self.map : Map = None
         self.explored_goals = [] # List of Points
         self.near_check_iterations = 0
-        self.near_check_threshold = 25
+        self.near_check_threshold = 50
+        self.random_iterations_threshold = 10000
+        self.close_threshold = 2.0
 
     def image_callback(self, msg):
         self.taken_picture = msg
@@ -225,7 +229,7 @@ class RescueNode(rclpy.node.Node):
                 return True
         return False
 
-    def duplicate_victim(self, new_point, existing_victims):
+    def duplicate_victim(self, new_point : Point, existing_victims):
         """
         Checks if a victim is a duplicate, and returns true only if it *is* a duplicate
         """
@@ -236,6 +240,10 @@ class RescueNode(rclpy.node.Node):
                 np.array([new_point.x, new_point.y])
             )
             if distance < threshold:
+                x_avg = (victim.point.point.x + new_point.x) / 2
+                y_avg = (victim.point.point.y + new_point.y) / 2
+                victim.point.point.x = x_avg
+                victim.point.point.y = y_avg
                 return True
         return False
 
@@ -248,10 +256,8 @@ class RescueNode(rclpy.node.Node):
             self.going_to_victim = True
             vic_pose : PoseStamped = self.victim_poses[i]
             orient = vic_pose.pose.orientation
-            orientation_list = np.array(
-                [orient.x, orient.y, orient.z, orient.w])
-            vic_orient = tf_transformations.euler_from_quaternion(
-                orientation_list)
+            orientation_list = np.array([orient.x, orient.y, orient.z, orient.w])
+            vic_orient = tf_transformations.euler_from_quaternion(orientation_list)
             yaw = vic_orient[2]
             if yaw >= 0:
                 yaw -= np.pi
@@ -263,7 +269,7 @@ class RescueNode(rclpy.node.Node):
                 goal[0], goal[1], yaw - (np.pi / 2))  # X, Y, Theta Z
             self.update_goal(next_goal)
 
-    def victim_transform(self, pose, id):
+    def victim_transform(self, pose : PoseStamped, id):
         """
         Transform (0, .75, 0) in victim's coordinate frame into a usable pose in the map's coordinate frame.
         """
@@ -392,7 +398,7 @@ class RescueNode(rclpy.node.Node):
 
                 elif self.goal_future.result().status == GoalStatus.STATUS_ABORTED:
                     self.get_logger().info("NAVIGATION SERVER HAS ABORTED.")
-                    self.node_future.set_result(False)
+                    # self.node_future.set_result(False)
                     self.navigation_complete = True
 
             elif self.going_home:
@@ -430,15 +436,33 @@ class RescueNode(rclpy.node.Node):
             map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
             self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
     
+    # def costmap_callback(self, costmap_msg : OccupancyGrid):
+    #     self.get_logger().info("HEY LOSERS THE COSTMAP HAS BEEN UPDATED")
+    #     if self.costmap is None:  # No need to do this every time map is published.
+
+    #         self.costmap = map_utils.Map(costmap_msg)
+
+    #         # Use numpy to calculate some statistics about the map:
+    #         total_cells = self.costmap.width * self.costmap.height
+    #         pct_occupied = np.count_nonzero(self.costmap.grid == 100) / total_cells * 100
+    #         pct_unknown = np.count_nonzero(self.costmap.grid == -1) / total_cells * 100
+    #         pct_free = np.count_nonzero(self.costmap.grid == 0) / total_cells * 100
+    #         map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
+    #         self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
+    #     else:
+    #         self.costmap = map_utils.Map(costmap_msg)
+    #         self.get_logger().info("HEY LOSERS THE COSTMAP HAS BEEN UPDATED")
+    
     
     def make_new_map_goal(self):
         """
         Generates a new goal within the map by picking a random cell in the map's grid and comparing the X and Y of that position to a list of previously-reached positions
         """
         map = self.map
+        random_iterations = 0
         while True:
-            row = random.uniform(-map.width, map.width) # random row within the map's cells
-            col = random.uniform(-map.height, map.height) # random column within the map's cells
+            row = random.randint(-map.width, map.width) # random row within the map's cells
+            col = random.randint(-map.height, map.height) # random column within the map's cells
 
             orient = self.current_pose.pose.pose.orientation
             orientation_array = np.array([orient.x, orient.y, orient.z, orient.w])
@@ -448,9 +472,18 @@ class RescueNode(rclpy.node.Node):
 
             cell = map.cell_position(row, col) # X and Y tuple of the center of our randomly chosen cell
             if self.good_goal(cell[0], cell[1]):
+                self.get_logger().info("GOAL GENERATED")
                 self.near_check_iterations = 0
                 new_goal = create_nav_goal(cell[0], cell[1], theta)
                 return new_goal
+            
+            random_iterations += 1
+            # Check to lower the too_close threshold if we've done too many random_iterations without a new goal
+            if random_iterations >= self.random_iterations_threshold:
+                self.close_threshold = self.close_threshold / 2
+                self.get_logger().info("TOO MANY BAD GOALS, REDUCING CLOSENESS THRESHOLD")
+                random_iterations = 0
+
             # else:
             #     self.get_logger().info("Invalid attempted random goal. Generating new possible goal position...")
 
@@ -467,7 +500,7 @@ class RescueNode(rclpy.node.Node):
                     return False
             checks_left = self.near_check_iterations < self.near_check_threshold
             if checks_left:
-                self.get_logger().info("CHECKING IF CLOSE ENOUGH...")
+                # self.get_logger().info("CHECKING IF CLOSE ENOUGH...")
                 near = self.near_self(x, y)
                 self.near_check_iterations += 1
                 if near: # if the goal we've found is close enough to ourself to be worth navigating to
@@ -484,25 +517,26 @@ class RescueNode(rclpy.node.Node):
         """
         Returns true only if the point we've generated is close enough to our current position.
         """
-        dist_threshold = 1.5
+        dist_threshold = 1.0
         current_pos : Point = self.current_pose.pose.pose.position
         distance = np.linalg.norm(
                 np.array([x, y]) -
                 np.array([current_pos.x, current_pos.y])
             )
         # return true if the distance is near ourself, aka the distance is less than the threshold.
-        self.get_logger().info(f"Distance to position: {distance}")
+
+        # self.get_logger().info(f"Distance to position: {distance}")
         return distance < dist_threshold
 
     def too_close(self, x, y, prev_goal: Point):
         """
         Returns true only if we are too close to a point we have already completed a navigation to.
         """
-        dist_threshold = 2.0
+        # dist_threshold = 2.0
         distance = np.linalg.norm(np.array([x, y]) -np.array([prev_goal.x, prev_goal.y])
             )
         # return true if the distance is too close, aka the distance is less than the threshold.
-        return distance < dist_threshold
+        return distance < self.close_threshold
 
 def goal_type (x, y, map: Map):
     """
