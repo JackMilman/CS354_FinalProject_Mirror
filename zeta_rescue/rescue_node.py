@@ -56,13 +56,10 @@ class RescueNode(rclpy.node.Node):
         self.initial_pose = None
         self.current_pose = None
 
-        latching_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        latching_qos = QoSProfile(
+            depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
             OccupancyGrid, 'map', self.map_callback, qos_profile=latching_qos)
-        # self.create_subscription(
-        #     OccupancyGrid, 'costmap_updates', self.costmap_callback, 10)
-        # self.create_subscription(
-        #     PoseWithCovarianceStamped, 'initialpose', self.initial_pose_callback, 10)
         self.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, 10)
         self.create_subscription(
@@ -102,7 +99,7 @@ class RescueNode(rclpy.node.Node):
         self.time_elapsed = 0
         self.timeout = timeout - 40
         self.nav_timer = 0
-        self.nav_timeout = 40
+        self.nav_timeout = 60
 
         self.transform_to_map = None
         self.buffer = Buffer()
@@ -112,7 +109,7 @@ class RescueNode(rclpy.node.Node):
         self.victim_search_id = 0
         self.victim_found = False
         self.victim_count = 0
-        self.scan_timer = 0
+        self.scan_timer = 1
 
         self.map : Map = None
         self.explored_goals = [] # List of Points
@@ -240,7 +237,7 @@ class RescueNode(rclpy.node.Node):
         """
         Checks if a victim is a duplicate, and returns true only if it *is* a duplicate
         """
-        threshold = 0.5
+        threshold = 0.47
         for victim in existing_victims:
             distance = np.linalg.norm(
                 np.array([victim.point.point.x, victim.point.point.y]) -
@@ -456,23 +453,6 @@ class RescueNode(rclpy.node.Node):
             map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
             self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
     
-    # def costmap_callback(self, costmap_msg : OccupancyGrid):
-    #     self.get_logger().info("HEY LOSERS THE COSTMAP HAS BEEN UPDATED")
-    #     if self.costmap is None:  # No need to do this every time map is published.
-
-    #         self.costmap = map_utils.Map(costmap_msg)
-
-    #         # Use numpy to calculate some statistics about the map:
-    #         total_cells = self.costmap.width * self.costmap.height
-    #         pct_occupied = np.count_nonzero(self.costmap.grid == 100) / total_cells * 100
-    #         pct_unknown = np.count_nonzero(self.costmap.grid == -1) / total_cells * 100
-    #         pct_free = np.count_nonzero(self.costmap.grid == 0) / total_cells * 100
-    #         map_str = "Map Statistics: occupied: {:.1f}% free: {:.1f}% unknown: {:.1f}%"
-    #         self.get_logger().info(map_str.format(pct_occupied, pct_free, pct_unknown))
-    #     else:
-    #         self.costmap = map_utils.Map(costmap_msg)
-    #         self.get_logger().info("HEY LOSERS THE COSTMAP HAS BEEN UPDATED")
-    
     
     def make_new_map_goal(self):
         """
@@ -507,9 +487,6 @@ class RescueNode(rclpy.node.Node):
                 self.close_threshold = self.close_threshold / 2
                 self.get_logger().info("TOO MANY BAD GOALS, REDUCING CLOSENESS THRESHOLD")
                 random_iterations = 0
-
-            # else:
-            #     self.get_logger().info("Invalid attempted random goal. Generating new possible goal position...")
 
     def good_goal(self, x, y):
         """
@@ -551,14 +528,12 @@ class RescueNode(rclpy.node.Node):
             )
         # return true if the distance is near ourself, aka the distance is less than the threshold.
 
-        # self.get_logger().info(f"Distance to position: {distance}")
         return distance < dist_threshold
 
     def too_close(self, x, y, prev_goal: Point):
         """
         Returns true only if we are too close to a point we have already completed a navigation to.
         """
-        # dist_threshold = 2.0
         distance = np.linalg.norm(np.array([x, y]) -np.array([prev_goal.x, prev_goal.y])
             )
         # return true if the distance is too close, aka the distance is less than the threshold.
