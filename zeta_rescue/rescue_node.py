@@ -100,7 +100,9 @@ class RescueNode(rclpy.node.Node):
         self.we_are_home = False
 
         self.time_elapsed = 0
-        self.timeout = timeout - 20
+        self.timeout = timeout - 40
+        self.nav_timer = 0
+        self.nav_timeout = 40
 
         self.transform_to_map = None
         self.buffer = Buffer()
@@ -129,8 +131,9 @@ class RescueNode(rclpy.node.Node):
         for victim in self.victims_complete:
             self.victim_publisher.publish(victim)
         self.get_logger().info("REPORT COMPLETE")
+        self.get_logger().info("All these victims lost, like...tears, in the rain.")
         if self.we_are_home:
-            self.get_logger().info("All these victims lost, like...tears, in the rain. Time... to die.")
+            self.get_logger().info("Time... to die.")
             self.node_future.set_result(True)
 
     def get_future(self):
@@ -237,7 +240,7 @@ class RescueNode(rclpy.node.Node):
         """
         Checks if a victim is a duplicate, and returns true only if it *is* a duplicate
         """
-        threshold = 0.47
+        threshold = 0.5
         for victim in existing_victims:
             distance = np.linalg.norm(
                 np.array([victim.point.point.x, victim.point.point.y]) -
@@ -298,18 +301,19 @@ class RescueNode(rclpy.node.Node):
         """
         self.going_to_victim = False
         self.get_logger().info(
-            f"Len victim_messages: {len(self.victim_messages): d}")
+            f"VICTIMS FOUND: {len(self.victim_messages): d}")
         self.get_logger().info(f"Search ID: {self.victim_search_id: d}")
         victim = self.victim_messages[self.victim_search_id]
         victim.image = self.taken_picture
         self.victims_complete.append(victim)
         self.victim_search_id += 1
-        self.get_logger().info("Picture shot")
+        self.get_logger().info("VICTIM PHOTOGRAPHED")
 
     def do_next_navigation(self):
         """
         Logic for determining which goal to go to next.
         """
+        self.nav_timer = 0
         victims_remaining = len(self.victims_complete) < len(self.victim_messages)
         self.get_logger().info(
             f"NUMBER OF VICTIMS LEFT: {len(self.victim_messages) - len(self.victims_complete): d}")
@@ -368,11 +372,18 @@ class RescueNode(rclpy.node.Node):
                         just_explored = self.goal.pose.pose.position
                         self.explored_goals.append(just_explored)
                     self.do_next_navigation()
+                elif self.nav_timer > self.nav_timeout and not self.going_home and not self.going_to_victim:
+                    self.get_logger().info("NAVIGATION TAKING TOO LONG, CANCELLING AND GENERATING NEW GOAL")
+                    self.explored_goals.append(self.current_pose.pose.pose.position)
+                    self.goal_future.result().cancel_goal_async()
+                    self.do_next_navigation()
 
             elif not self.wandering:
                 self.get_logger().info("RESCUEBOT ROLLING OUT")
                 self.start_wandering()
         self.time_elapsed += 1
+        self.nav_timer += 1
+
         # self.get_logger().info(f"TIME ELAPSED: {self.time_elapsed: d}")
 
     def navigation_callback(self):
